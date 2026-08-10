@@ -130,7 +130,9 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <button id="zoomFit" class="ghost">全体表示</button>
   </div>
   <div class="hgroup">
-    <span id="syncStatus" class="hint" style="margin-right:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">同期準備中…</span>
+    <span id="syncStatus" class="hint" style="margin-right:8px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">同期準備中…</span>
+    <button id="pullCloud" class="ghost" title="共有上の最新データを取り込む">最新を取得</button>
+    <button id="pushCloud" class="ghost" title="今の紙面を共有に保存">共有に保存</button>
     <button id="saveJson" class="ghost" title="手元用のバックアップ">ダウンロード</button>
     <button id="loadJson" class="ghost" title="JSONから復元">読込</button>
     <button id="exportPng">PNG書き出し</button>
@@ -177,7 +179,8 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <li><b>日付を足す</b>：「日付を入れる」から、右上の日付欄・右端の縦書きなどを選んで配置。置いたあとは自由に移動できます。</li>
     <li><b>書き出し</b>：「A3で印刷」で表裏2ページを両面印刷（用紙A3・余白なし・原寸100%）。「PNG書き出し」は300dpi（3508×4961px）の画像として保存します。</li>
     <li><b>紙面そのものを更新したとき</b>：何も選んでいない状態の右パネルから「この面の元画像を差し替え」でA3・300dpi（3508×4961px）の新しい画像に入れ替えられます。</li>
-    <li><b>自動共有保存</b>：写真を入れるとクラウドへ自動保存され、URLを知っている人なら誰でも続きから編集できます。数秒ごとに他の人の更新も取り込みます。</li>
+    <li><b>写真の差し替え・空に戻す</b>：入った写真を選ぶと右パネルに「写真を差し替え」「枠を空に戻す」が出ます。枠に別の画像をドロップしても差し替えできます。</li>
+    <li><b>共有</b>：写真を入れた／差し替えたときだけ自動でクラウド保存します。他の人の更新は勝手には反映しません。「最新を取得」で取り込み、「共有に保存」で今の紙面を送れます。</li>
     <li><b>手元バックアップ</b>：「ダウンロード」で.jsonを書き出し。「読込」でそのファイルから復元できます。</li>
   </ul>
   <div style="text-align:right;margin-top:16px"><button onclick="help.close()">閉じる</button></div>
@@ -278,10 +281,10 @@ let cloudRevision=0, saveTimer=null;
 const syncEl=()=>$("#syncStatus");
 function setSyncStatus(kind,msg){
   const el=syncEl(); if(!el) return;
-  const map={idle:"共有同期OK", saving:"クラウド保存中…", uploading:"写真を送信中…",
-    pulling:"他の更新を取得中…", error:"同期エラー", booting:"同期準備中…"};
+  const map={idle:"共有接続OK", saving:"クラウド保存中…", uploading:"写真を送信中…",
+    pulling:"最新を取得中…", remote:"共有に新しい更新あり", error:"同期エラー", booting:"同期準備中…"};
   el.textContent=msg||map[kind]||kind;
-  el.style.color=kind==="error"?"#ff8a8a":"var(--mute)";
+  el.style.color=kind==="error"?"#ff8a8a":(kind==="remote"?"#ffd27a":"var(--mute)");
 }
 function buildLayoutPayload(){
   const used=new Set(); state.pages.forEach(p=>p.items.forEach(i=>{ if(i.type==="photo"&&i.src) used.add(i.src); }));
@@ -380,13 +383,11 @@ async function cloudSave(){
     const data=await res.json().catch(()=>({}));
     if(!res.ok) throw new Error(data.error||"save failed");
     cloudRevision=Number(data.revision||cloudRevision);
-    setSyncStatus("idle",`共有済 · r${cloudRevision}`);
+    setSyncStatus("idle",`共有保存済 · r${cloudRevision}`);
   }catch(err){
     console.error(err);
     cloudDirty=true;
-    setSyncStatus("error","保存失敗（再試行します）");
-    clearTimeout(saveTimer);
-    saveTimer=setTimeout(()=>cloudSave(), 2500);
+    setSyncStatus("error","保存失敗（再試行できます）");
   }finally{ cloudSaving=false; }
 }
 async function fetchCloudState(){
@@ -394,18 +395,42 @@ async function fetchCloudState(){
   if(!res.ok) throw new Error("state fetch failed");
   return await res.json();
 }
-async function pollCloud(){
+/** 他端末の更新を「通知」するだけ。勝手には反映しない */
+async function checkRemote(){
   if(!cloudReady||cloudSaving||cloudDirty||applyingRemote) return;
   try{
     const data=await fetchCloudState();
     if(data.empty) return;
     const rev=Number(data.revision||0);
-    if(rev<=cloudRevision) return;
-    setSyncStatus("pulling");
-    await applyLayoutData(data);
-    setSyncStatus("idle",`他端末の更新を反映 · r${cloudRevision}`);
-    toast("他の人の更新を取り込みました");
+    if(rev>cloudRevision) setSyncStatus("remote",`共有に新しい更新あり · r${rev}`);
   }catch(err){ /* quiet */ }
+}
+async function pullCloud({confirmIfLocal=true}={}){
+  if(cloudSaving) return;
+  if(confirmIfLocal && cloudDirty && !confirm("保存していない変更があります。共有の最新で上書きしますか？")) return;
+  setSyncStatus("pulling");
+  try{
+    const data=await fetchCloudState();
+    const hasItems=!data.empty && Array.isArray(data.pages) && data.pages.some(p=>(p.items||[]).length>0);
+    if(!hasItems){
+      toast("共有にはまだ配置データがありません");
+      setSyncStatus("idle","共有は空です");
+      return;
+    }
+    await applyLayoutData(data);
+    cloudDirty=false;
+    setSyncStatus("idle",`最新を取得 · r${cloudRevision}`);
+    toast("共有の最新データを取り込みました");
+  }catch(err){
+    console.error(err);
+    setSyncStatus("error","取得に失敗しました");
+    toast("最新の取得に失敗しました");
+  }
+}
+async function pushCloud(){
+  cloudDirty=true;
+  await cloudSave();
+  if(!cloudDirty) toast("共有に保存しました");
 }
 async function bootCloud(){
   setSyncStatus("booting");
@@ -417,15 +442,15 @@ async function bootCloud(){
       setSyncStatus("idle",`共有データを読込 · r${cloudRevision}`);
     }else{
       if(!data.empty) cloudRevision=Number(data.revision||0);
-      setSyncStatus("idle","共有待機中（写真を入れると自動保存）");
+      setSyncStatus("idle","写真を入れると共有保存されます");
     }
   }catch(err){
     console.error(err);
     setSyncStatus("error","共有に接続できません");
   }finally{
     cloudReady=true;
-    setInterval(pollCloud, 8000);
-    document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") pollCloud(); });
+    setInterval(checkRemote, 15000);
+    document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") checkRemote(); });
   }
 }
 
@@ -435,7 +460,7 @@ function snapshot(){
   const s = JSON.stringify(state.pages);
   if(hist[hpos]===s) return;
   hist = hist.slice(0,hpos+1); hist.push(s); if(hist.length>60) hist.shift(); hpos=hist.length-1;
-  if(!applyingRemote) queueCloudSave(false);
+  // 常時クラウド保存しない（写真の入替・明示保存のときだけ）
 }
 function undo(){ if(hpos<=0) return; hpos--; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
 function redo(){ if(hpos>=hist.length-1) return; hpos++; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
@@ -747,6 +772,7 @@ function inspector(){
       <div class="row" style="margin-top:12px"><label>台紙</label><div class="fill">
         <label class="chk"><input type="checkbox" id="cShowBase" ${state.showBase?"checked":""}>元の紙面を表示</label></div></div>
       <div class="row"><label>作り直す</label><div class="fill"><button data-act="reframe">この面を写真枠と日付だけに戻す</button></div></div>
+      <div class="row"><label></label><div class="fill"><button data-act="reframeAll">表裏まとめて最初の状態に戻す</button></div></div>
       <div class="row"><label>台紙の画像</label><div class="fill"><button data-act="rebase">この面の元画像を差し替え</button></div></div>
       <div class="row"><label>目安の線</label><div class="fill">
         <label class="chk"><input type="checkbox" id="cGrid" ${state.grid?"checked":""}>100px方眼を表示</label></div></div>
@@ -763,6 +789,8 @@ function inspector(){
     </div>`;
   }else if(it.type==="photo"){
     h+=`<div class="sec"><h3>写　真</h3>
+      <button data-act="pick" class="primary" style="width:100%;margin-bottom:6px">写真を差し替え</button>
+      <button data-act="clear" style="width:100%;margin-bottom:10px">枠を空に戻す（緑の枠）</button>
       <div class="row"><label>位置 X / Y</label><div class="fill grid2">
         <input type="number" data-f="x" value="${Math.round(it.x)}"><input type="number" data-f="y" value="${Math.round(it.y)}"></div></div>
       <div class="row"><label>幅 / 高さ</label><div class="fill grid2">
@@ -882,8 +910,22 @@ function act(a){
         it.crop={sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight};
         it.h=Math.round(it.w*im.naturalHeight/im.naturalWidth); break; }
     case "pick": pickForFrame(it); return;
+    case "clear":
+      if(it&&it.type==="photo"){
+        if(it.src && !confirm("この枠の写真を外して、緑の空枠に戻しますか？")) return;
+        it.src=null; it.name="写真枠";
+        it.crop={sx:0,sy:0,sw:1,sh:1};
+        state.cropMode=false;
+        renderAll(); snapshot(); queueCloudSave(true); toast("枠を空に戻しました");
+      }
+      return;
     case "reframe": if(confirm("この面の配置をすべて消して、写真枠と日付だけの状態に戻します。よろしいですか？")){
-        state.pages[state.page]={items:defaultItems(state.page)}; state.sel=null; } break;
+        state.pages[state.page]={items:defaultItems(state.page)}; state.sel=null;
+        renderAll(); snapshot(); queueCloudSave(true); toast("この面をリセットしました"); }
+      return;
+    case "reframeAll": if(confirm("表面・裏面の配置をすべて消して、最初の写真枠と日付だけの状態に戻します。よろしいですか？")){
+        resetFrames(); renderAll(); snapshot(); queueCloudSave(true); toast("表裏をリセットしました"); }
+      return;
     case "rebase": rebase(); return;
     case "kansuji": it.text=toKansuji(it.text); break;
     case "today": { const d=new Date();
@@ -1066,7 +1108,7 @@ wrap.addEventListener("drop",e=>{
   if(!files.length) return;
   const el=e.target.closest(".item");
   const it=el?items().find(i=>i.id===el.dataset.id):null;
-  if(it&&it.type==="photo"&&!it.src){
+  if(it&&it.type==="photo"){
     ingestImageFile(files[0],(url,name)=>fillFrame(it,url,name));
     if(files.length>1) readFiles(files.slice(1), pt(e));
     return;
@@ -1078,7 +1120,7 @@ window.addEventListener("paste",e=>{
 });
 
 /* ============ toolbar ============ */
-$("#addImg").onclick=()=>{ const it=sel(); if(it&&it.type==="photo"&&!it.src) pickForFrame(it); else $("#fileInput").click(); };
+$("#addImg").onclick=()=>{ const it=sel(); if(it&&it.type==="photo") pickForFrame(it); else $("#fileInput").click(); };
 $("#addText").onclick=()=>{ const t=makeText(); const m=layoutText(t); t.w=m.w;t.h=m.h; items().push(t); state.sel=t.id; renderAll(); snapshot(); };
 $("#addDate").onclick=addDateDialog;
 $("#zoomIn").onclick=()=>setScale(state.scale*1.2,true);
@@ -1086,6 +1128,8 @@ $("#zoomOut").onclick=()=>setScale(state.scale/1.2,true);
 $("#zoomFit").onclick=()=>{setScale(fitScale());wrap.scrollTo(0,0);};
 $("#exportPng").onclick=exportPng;
 $("#printBtn").onclick=doPrint;
+$("#pullCloud").onclick=()=>pullCloud();
+$("#pushCloud").onclick=()=>pushCloud();
 $("#saveJson").onclick=saveJson;
 $("#loadJson").onclick=()=>$("#jsonInput").click();
 $("#helpBtn").onclick=()=>$("#help").showModal();
