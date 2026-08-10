@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学窓新聞 写真差し込みツール</title>
+<style>
+:root{
+  --ink:#15171b; --panel:#1d2025; --panel2:#242830; --line:#343a42;
+  --fg:#eae8e3; --mute:#98a0a9; --red:#e7141b; --paper:#ffffff;
+  --mincho:"Yu Mincho","YuMincho","Hiragino Mincho ProN","Noto Serif JP",serif;
+  --gothic:"Yu Gothic","YuGothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--ink);color:var(--fg);font-family:var(--gothic);font-size:13px;overflow:hidden;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
+button{background:var(--panel2);border:1px solid var(--line);border-radius:3px;padding:6px 10px;cursor:pointer;line-height:1.2}
+button:hover{background:#2d323b;border-color:#4a525c}
+button:active{transform:translateY(1px)}
+button:disabled{opacity:.4;cursor:default}
+button.primary{background:var(--red);border-color:#ff3b41;color:#fff;font-weight:700}
+button.primary:hover{background:#ff2028}
+button.ghost{background:transparent}
+:focus-visible{outline:2px solid #7fb2ff;outline-offset:1px}
+
+/* ---- header ---- */
+header{height:50px;display:flex;align-items:center;gap:14px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel)}
+.brand{font-family:var(--mincho);font-size:17px;letter-spacing:.34em;padding-right:14px;border-right:1px solid var(--line);white-space:nowrap}
+.brand small{display:block;font-family:var(--gothic);font-size:9px;letter-spacing:.18em;color:var(--mute);margin-top:2px}
+.spacer{flex:1}
+.hgroup{display:flex;gap:6px;align-items:center}
+
+/* ---- main ---- */
+.main{display:flex;height:calc(100% - 50px)}
+.rail{width:58px;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding-top:12px;gap:8px;flex:none}
+.ptab{width:40px;height:96px;border:1px solid var(--line);background:transparent;border-radius:2px;color:var(--mute);
+  font-family:var(--mincho);font-size:18px;writing-mode:vertical-rl;letter-spacing:.2em;display:flex;align-items:center;justify-content:center;cursor:pointer}
+.ptab.on{background:var(--red);border-color:var(--red);color:#fff}
+.rail .lbl{font-size:9px;color:var(--mute);letter-spacing:.1em}
+
+.stagewrap{flex:1;overflow:auto;background:#0e1013;position:relative;padding:40px}
+.canvasarea{position:relative;margin:0 auto}
+.paper{position:absolute;top:0;left:0;transform-origin:0 0;background:var(--paper);box-shadow:0 10px 50px rgba(0,0,0,.6)}
+#base{position:absolute;inset:0;width:100%;height:100%;user-select:none;pointer-events:none}
+#layer{position:absolute;inset:0}
+.grid{position:absolute;inset:0;pointer-events:none;display:none;
+  background-image:linear-gradient(rgba(231,20,27,.25) 1px,transparent 1px),linear-gradient(90deg,rgba(231,20,27,.25) 1px,transparent 1px);
+  background-size:100px 100px}
+.grid.on{display:block}
+
+.item{position:absolute;top:0;left:0;transform-origin:center center}
+.item.photo{overflow:hidden}
+.item.photo img{position:absolute;user-select:none;-webkit-user-drag:none;display:block}
+.item canvas{display:block}
+.item .hit{position:absolute;inset:0;cursor:move}
+.item.empty{background:rgba(140,193,112,.22);outline:6px dashed rgba(90,140,70,.75);outline-offset:-6px}
+.item.empty .ef{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;
+  color:#3f6b32;font-family:var(--gothic);font-weight:700;pointer-events:none}
+.item.empty .ef b{font-size:150px;line-height:1}
+.item.empty .ef span{font-size:56px;letter-spacing:.12em}
+.sel{position:absolute;top:0;left:0;transform-origin:center center;pointer-events:none;outline:2px solid #4d9bff;outline-offset:0}
+.sel.cropping{outline:2px dashed var(--red)}
+.h{position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;background:#fff;border:2px solid #4d9bff;border-radius:2px;pointer-events:auto}
+.h.edge{border-radius:9px;border-color:var(--red)}
+.h.rot{border-radius:50%;border-color:#111;background:#ffd400}
+.badge{position:absolute;left:0;top:-26px;background:#4d9bff;color:#08131f;font-size:11px;font-weight:700;padding:2px 6px;border-radius:2px;white-space:nowrap}
+
+/* ---- inspector ---- */
+.insp{width:322px;flex:none;background:var(--panel);border-left:1px solid var(--line);overflow-y:auto;padding:14px 14px 60px}
+.insp h3{font-family:var(--mincho);font-size:13px;letter-spacing:.22em;margin:0 0 10px;padding-bottom:7px;border-bottom:1px solid var(--line);font-weight:600}
+.sec{margin-bottom:22px}
+.row{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.row>label{width:74px;color:var(--mute);flex:none;font-size:12px}
+.row .fill{flex:1;min-width:0}
+input[type=text],input[type=number],select,textarea{background:#14171b;border:1px solid var(--line);border-radius:3px;padding:6px 7px;width:100%}
+textarea{resize:vertical;min-height:56px;line-height:1.5}
+input[type=range]{width:100%;accent-color:var(--red)}
+input[type=color]{background:#14171b;border:1px solid var(--line);border-radius:3px;height:30px;width:44px;padding:2px;cursor:pointer}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.hint{color:var(--mute);font-size:11px;line-height:1.7}
+.empty{color:var(--mute);font-size:12px;line-height:1.8;border:1px dashed var(--line);border-radius:4px;padding:14px;text-align:center}
+.chk{display:flex;align-items:center;gap:7px;color:var(--mute);cursor:pointer;user-select:none}
+.chk input{accent-color:var(--red)}
+.seg{display:flex;border:1px solid var(--line);border-radius:3px;overflow:hidden}
+.seg button{border:0;border-radius:0;flex:1;background:transparent;padding:6px 4px}
+.seg button.on{background:var(--red);color:#fff;font-weight:700}
+.layers{display:flex;flex-direction:column;gap:4px;max-height:210px;overflow-y:auto}
+.lay{display:flex;align-items:center;gap:8px;padding:5px 7px;border:1px solid var(--line);border-radius:3px;cursor:pointer;background:#14171b}
+.lay.on{border-color:#4d9bff;background:#1a2330}
+.lay .th{width:34px;height:26px;object-fit:cover;background:#000;flex:none;border-radius:2px}
+.lay .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.drop{position:absolute;inset:0;background:rgba(231,20,27,.14);border:3px dashed var(--red);display:none;align-items:center;justify-content:center;
+  font-family:var(--mincho);font-size:22px;letter-spacing:.2em;z-index:50;pointer-events:none}
+.drop.on{display:flex}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#000;border:1px solid var(--line);padding:9px 16px;border-radius:4px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:80}
+.toast.on{opacity:1}
+dialog{background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:6px;max-width:620px;padding:22px 24px}
+dialog::backdrop{background:rgba(0,0,0,.65)}
+dialog h2{font-family:var(--mincho);letter-spacing:.2em;font-size:16px;margin:0 0 14px}
+dialog li{margin-bottom:6px;line-height:1.7}
+kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;border-radius:3px;padding:1px 6px;font-family:var(--gothic);font-size:11px}
+#printarea{display:none}
+@media print{
+  body{overflow:visible;background:#fff}
+  header,.main,.toast{display:none!important}
+  #printarea{display:block}
+  #printarea img{display:block;width:297mm;height:420mm;page-break-after:always}
+  #printarea img:last-child{page-break-after:auto}
+  @page{size:A3 portrait;margin:0}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">学窓新聞<small>写真差し込みツール</small></div>
+  <div class="hgroup">
+    <button id="addImg">写真を追加</button>
+    <button id="addText">文字を追加</button>
+    <button id="addDate">日付を入れる</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="hgroup">
+    <button id="zoomOut" title="縮小">－</button>
+    <span id="zoomLbl" style="width:46px;text-align:center;color:var(--mute)">—</span>
+    <button id="zoomIn" title="拡大">＋</button>
+    <button id="zoomFit" class="ghost">全体表示</button>
+  </div>
+  <div class="hgroup">
+    <button id="saveJson" class="ghost">保存</button>
+    <button id="loadJson" class="ghost">読み込み</button>
+    <button id="exportPng">PNG書き出し</button>
+    <button id="printBtn" class="primary">A3で印刷</button>
+    <button id="helpBtn" class="ghost" title="使い方">？</button>
+  </div>
+</header>
+
+<div class="main">
+  <nav class="rail">
+    <div class="lbl">面</div>
+    <button class="ptab on" data-page="0">表　面</button>
+    <button class="ptab" data-page="1">裏　面</button>
+  </nav>
+
+  <div class="stagewrap" id="stagewrap">
+    <div class="canvasarea" id="canvasarea">
+      <div class="paper" id="paper">
+        <img id="base" alt="">
+        <div class="grid" id="grid"></div>
+        <div id="layer"></div>
+      </div>
+    </div>
+    <div class="drop" id="dropzone">ここに写真をドロップ</div>
+  </div>
+
+  <aside class="insp" id="insp"></aside>
+</div>
+
+<input type="file" id="fileInput" accept="image/*" multiple hidden>
+<input type="file" id="jsonInput" accept="application/json,.json" hidden>
+<div class="toast" id="toast"></div>
+<div id="printarea"></div>
+
+<dialog id="help">
+  <h2>使い方</h2>
+  <ul>
+    <li><b>写真枠に入れる</b>：緑の枠をクリックすると画像を選ぶ画面が開きます。枠に画像ファイルを直接ドロップしても入ります。枠は動かしても大きさを変えても構いません。空のままなら印刷には出ません。</li>
+    <li><b>写真を置く</b>：「写真を追加」、または画像ファイルを紙面にドラッグ＆ドロップ。<kbd>Ctrl</kbd>+<kbd>V</kbd> で貼り付けも可。</li>
+    <li><b>動かす</b>：写真をドラッグ。矢印キーで微調整（<kbd>Shift</kbd>で10倍）。</li>
+    <li><b>大きさ</b>：<b>角</b>の青ハンドルをドラッグ（写真ごと拡大縮小）。</li>
+    <li><b>トリミング</b>：<b>辺</b>の赤ハンドルをドラッグすると、写真は動かず枠だけ切り詰められます。枠の中で写真をずらすには <kbd>Alt</kbd>＋ドラッグ、またはダブルクリックでトリミング編集モード。</li>
+    <li><b>日付は最初から入っています</b>：開いた日の日付が、表裏それぞれの右上（横書き）と、表面の発行日欄（「日」「曜日」）に入ります。文字を選べば書き換えも移動もできます。</li>
+    <li><b>日付を足す</b>：「日付を入れる」から、右上の日付欄・右端の縦書きなどを選んで配置。置いたあとは自由に移動できます。</li>
+    <li><b>書き出し</b>：「A3で印刷」で表裏2ページを両面印刷（用紙A3・余白なし・原寸100%）。「PNG書き出し」は300dpi（3508×4961px）の画像として保存します。</li>
+    <li><b>紙面そのものを更新したとき</b>：何も選んでいない状態の右パネルから「この面の元画像を差し替え」でA3・300dpi（3508×4961px）の新しい画像に入れ替えられます。</li>
+    <li><b>保存</b>：「保存」で配置データを.jsonに書き出し。別のPCでも「読み込み」で続きから作業できます。</li>
+  </ul>
+  <div style="text-align:right;margin-top:16px"><button onclick="help.close()">閉じる</button></div>
+</dialog>
+
+<script>
+"use strict";
+const BASE_SRC = [
+  "assets/base-page-0.jpg",
+  "assets/base-page-1.jpg"
+];
+const DOC = {w:3508, h:4961};       // A3 / 300dpi
+const FONTS = {
+  mincho:'"Yu Mincho","YuMincho","Hiragino Mincho ProN","Noto Serif JP",serif',
+  gothic:'"Yu Gothic","YuGothic","Hiragino Kaku Gothic ProN","Noto Sans JP","Meiryo",sans-serif',
+  kyokasho:'"UD Digi Kyokasho N-R","Yu Kyokasho","Hiragino Mincho ProN",serif',
+  maru:'"Hiragino Maru Gothic ProN","Zen Maru Gothic","Rounded Mplus 1c",sans-serif',
+  hiraStdN:'"Hiragino Kaku Gothic StdN","HiraKakuStdN-W8","ヒラギノ角ゴ StdN W8","Hiragino Sans","Hiragino Kaku Gothic ProN",sans-serif'
+};
+const FONT_LABEL = {mincho:"明朝",gothic:"ゴシック",kyokasho:"教科書体",maru:"丸ゴシック",hiraStdN:"ヒラギノ角ゴ StdN"};
+const VROT = new Set(["ー","－","—","〜","～","(",")","（","）","「","」","『","』","【","】","〈","〉","［","］","{","}","…","‥","―"]);
+
+const state = {page:0, pages:[{items:[]},{items:[]}], sel:null, scale:0.2, showBase:true, grid:false, cropMode:false};
+const srcs = new Map();            // id -> {id,src,img,name}
+let uid = 1; const nid = p => p + (uid++);
+
+const $ = s => document.querySelector(s);
+const paper=$("#paper"), layer=$("#layer"), baseImg=$("#base"), area=$("#canvasarea"), wrap=$("#stagewrap");
+const page = () => state.pages[state.page];
+const items = () => page().items;
+const sel = () => items().find(i => i.id === state.sel) || null;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+/* ============ base pages ============ */
+const baseImgs = [];
+BASE_SRC.forEach((s,i)=>{ const im=new Image(); im.src=s; baseImgs[i]=im; });
+
+/* ============ 写真枠 ============ */
+const FRAMES=[
+  [{x:281,y:879,w:2148,h:1260}],
+  [{x:222,y:662,w:1874,h:1251},{x:2027,y:2975,w:1145,h:933},
+   {x:199,y:2476,w:647,h:453},{x:199,y:2966,w:647,h:453},{x:199,y:3456,w:647,h:452}]
+];
+function newFrame(f){
+  return {id:nid("i"),type:"photo",src:null,name:"写真枠",x:f.x,y:f.y,w:f.w,h:f.h,rot:0,
+    crop:{sx:0,sy:0,sw:1,sh:1},border:0,borderColor:"#000000",pad:0,padColor:"#ffffff",opacity:1,shadow:false};
+}
+const DATEPOS=[{x:3246,y:125,size:44},{x:3218,y:146,size:40}];  // 右上・横書き（右端は紙面の枠線に揃え、下の罫線ぎりぎり）
+function todayParts(){
+  const d=new Date();
+  return {y:d.getFullYear(),mo:d.getMonth()+1,da:d.getDate(),wd:"日月火水木金土"[d.getDay()]};
+}
+// 例: 2026年(令和8年)8月21日(火)
+function dateLabel(y,mo,da,wd){ return `${y}年(令和${y-2018}年)${mo}月${da}日(${wd})`; }
+function fitText(t){ const m=layoutText(t); t.w=m.w; t.h=m.h; return t; }
+function defaultItems(pi){
+  const list=FRAMES[pi].map(newFrame), p=todayParts(), c=DATEPOS[pi];
+  const head=fitText(makeText({text:dateLabel(p.y,p.mo,p.da,p.wd),size:c.size,lh:1,
+    family:"mincho",weight:500,color:"#111111"}));
+  head.x=c.x-head.w; head.y=c.y; list.push(head);
+  if(pi===0){
+    const num=fitText(makeText({text:String(p.da),y:1452,size:66,lh:1,family:"hiraStdN",weight:900,color:"#111111"}));
+    num.x=3168-num.w;
+    const wd=fitText(makeText({text:p.wd,x:3210,y:1462,size:56,lh:1,family:"hiraStdN",weight:700,color:"#111111"}));
+    list.push(num,wd);
+  }
+  return list;
+}
+function resetFrames(){
+  state.pages=FRAMES.map((l,i)=>({items:defaultItems(i)}));
+  state.sel=null; state.cropMode=false;
+}
+function coverCrop(it){
+  const im=srcs.get(it.src).img, ar=it.w/it.h;
+  let sw=im.naturalWidth, sh=sw/ar;
+  if(sh>im.naturalHeight){ sh=im.naturalHeight; sw=sh*ar; }
+  it.crop={sx:(im.naturalWidth-sw)/2, sy:(im.naturalHeight-sh)/2, sw, sh};
+}
+function fillFrame(it,src,name){
+  const im=new Image();
+  im.onload=()=>{
+    const id=nid("s"); srcs.set(id,{id,src,img:im,name});
+    it.src=id; it.name=name; coverCrop(it);
+    state.sel=it.id; renderAll(); snapshot();
+  };
+  im.src=src;
+}
+let pickTarget=null;
+function pickForFrame(it){ pickTarget=it; $("#fileInput").click(); }
+
+/* ============ history ============ */
+let hist=[], hpos=-1;
+function snapshot(){
+  const s = JSON.stringify(state.pages);
+  if(hist[hpos]===s) return;
+  hist = hist.slice(0,hpos+1); hist.push(s); if(hist.length>60) hist.shift(); hpos=hist.length-1;
+}
+function undo(){ if(hpos<=0) return; hpos--; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
+function redo(){ if(hpos>=hist.length-1) return; hpos++; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
+
+/* ============ toast ============ */
+let tt; function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(tt); tt=setTimeout(()=>t.classList.remove("on"),2200); }
+
+/* ============ zoom ============ */
+function fitScale(){
+  const pad=80;
+  return Math.min((wrap.clientWidth-pad)/DOC.w,(wrap.clientHeight-pad)/DOC.h);
+}
+function setScale(s,keepCenter){
+  const old=state.scale;
+  state.scale=clamp(s,0.05,1.5);
+  applyScale();
+  if(keepCenter){
+    const r=state.scale/old;
+    wrap.scrollLeft=(wrap.scrollLeft+wrap.clientWidth/2)*r-wrap.clientWidth/2;
+    wrap.scrollTop=(wrap.scrollTop+wrap.clientHeight/2)*r-wrap.clientHeight/2;
+  }
+}
+function applyScale(){
+  paper.style.transform=`scale(${state.scale})`;
+  area.style.width=(DOC.w*state.scale)+"px";
+  area.style.height=(DOC.h*state.scale)+"px";
+  paper.style.width=DOC.w+"px"; paper.style.height=DOC.h+"px";
+  $("#zoomLbl").textContent=Math.round(state.scale*100)+"%";
+  drawSel();
+}
+
+/* ============ geometry ============ */
+function centerOf(it){ return {x:it.x+it.w/2, y:it.y+it.h/2}; }
+function rot(px,py,cx,cy,deg){
+  const r=deg*Math.PI/180,s=Math.sin(r),c=Math.cos(r),dx=px-cx,dy=py-cy;
+  return {x:cx+dx*c-dy*s, y:cy+dx*s+dy*c};
+}
+// keep the given local anchor (0..1 of box) fixed in page space after a geometry change
+function anchored(it, ax, ay, fn){
+  const c0=centerOf(it), p0=rot(it.x+it.w*ax, it.y+it.h*ay, c0.x, c0.y, it.rot||0);
+  fn();
+  const c1=centerOf(it), p1=rot(it.x+it.w*ax, it.y+it.h*ay, c1.x, c1.y, it.rot||0);
+  it.x+=p0.x-p1.x; it.y+=p0.y-p1.y;
+}
+
+/* ============ item creation ============ */
+function addPhoto(src,name,at){
+  const im=new Image();
+  im.onload=()=>{
+    const id=nid("s"); srcs.set(id,{id,src,img:im,name});
+    const maxW=DOC.w*0.34, k=Math.min(maxW/im.naturalWidth, (DOC.h*0.3)/im.naturalHeight,1.2);
+    const w=Math.round(im.naturalWidth*k), h=Math.round(im.naturalHeight*k);
+    const p = at || viewCenter();
+    const it={id:nid("i"),type:"photo",src:id,name,x:Math.round(p.x-w/2),y:Math.round(p.y-h/2),w,h,rot:0,
+      crop:{sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight},
+      border:0,borderColor:"#000000",pad:0,padColor:"#ffffff",opacity:1,shadow:false};
+    items().push(it); state.sel=it.id; renderAll(); snapshot();
+  };
+  im.src=src;
+}
+function viewCenter(){
+  return {x:clamp((wrap.scrollLeft+wrap.clientWidth/2)/state.scale,0,DOC.w),
+          y:clamp((wrap.scrollTop+wrap.clientHeight/2)/state.scale,0,DOC.h)};
+}
+function makeText(o){
+  const p=viewCenter();
+  return Object.assign({id:nid("i"),type:"text",text:"テキスト",x:p.x-100,y:p.y-40,w:200,h:80,rot:0,
+    size:64,family:"mincho",weight:700,color:"#111111",vertical:false,ls:0,lh:1.35,align:"left",opacity:1,bg:"none"},o||{});
+}
+
+/* ============ text layout / drawing (shared by editor & export) ============ */
+const mctx=document.createElement("canvas").getContext("2d");
+function layoutText(it){
+  const lines=it.text.split("\n"), ls=it.ls*it.size, lh=it.lh*it.size;
+  mctx.font=`${it.weight} ${it.size}px ${FONTS[it.family]}`;
+  if(!it.vertical){
+    const widths=lines.map(l=>{ let w=0; for(const ch of [...l]) w+=mctx.measureText(ch).width+ls; return Math.max(0,w-ls); });
+    return {lines,widths,ls,lh,w:Math.max(2,...widths),h:Math.max(2,lines.length*lh)};
+  }
+  const heights=lines.map(l=>{ const n=[...l].length; return Math.max(0,n*(it.size+ls)-ls); });
+  return {lines,heights,ls,lh,w:Math.max(2,lines.length*lh),h:Math.max(2,...heights)};
+}
+function drawTextInto(ctx,it,ox,oy){
+  const m=layoutText(it);
+  ctx.save(); ctx.globalAlpha=it.opacity??1;
+  ctx.font=`${it.weight} ${it.size}px ${FONTS[it.family]}`;
+  ctx.fillStyle=it.color; ctx.textBaseline="top";
+  if(!it.vertical){
+    ctx.textAlign="left";
+    m.lines.forEach((line,li)=>{
+      let x=ox; const free=m.w-m.widths[li];
+      if(it.align==="center") x+=free/2; else if(it.align==="right") x+=free;
+      const y=oy+li*m.lh+(m.lh-it.size)/2;
+      for(const ch of [...line]){ ctx.fillText(ch,x,y); x+=mctx.measureText(ch).width+m.ls; }
+    });
+  }else{
+    ctx.textAlign="center";
+    m.lines.forEach((line,li)=>{
+      const cx=ox+m.w-m.lh*(li+0.5);
+      let y=oy; const free=m.h-m.heights[li];
+      if(it.align==="center") y+=free/2; else if(it.align==="right") y+=free;
+      for(const ch of [...line]){
+        if(VROT.has(ch)){ ctx.save(); ctx.translate(cx,y+it.size/2); ctx.rotate(Math.PI/2); ctx.fillText(ch,0,-it.size/2); ctx.restore(); }
+        else ctx.fillText(ch,cx,y);
+        y+=it.size+m.ls;
+      }
+    });
+  }
+  ctx.restore();
+}
+
+/* ============ render ============ */
+function renderAll(){
+  baseImg.src=BASE_SRC[state.page];
+  baseImg.style.opacity=state.showBase?1:0.12;
+  layer.innerHTML="";
+  items().forEach(it=>layer.appendChild(node(it)));
+  drawSel(); inspector(); applyScale();
+  document.querySelectorAll(".ptab").forEach(b=>b.classList.toggle("on",+b.dataset.page===state.page));
+}
+function node(it){
+  const el=document.createElement("div");
+  el.className="item "+it.type; el.dataset.id=it.id;
+  if(it.type==="photo"&&!it.src){
+    el.classList.add("empty");
+    el.style.cssText=`width:${it.w}px;height:${it.h}px;transform:translate(${it.x}px,${it.y}px) rotate(${it.rot||0}deg)`;
+    const u=Math.min(it.w,it.h);
+    el.innerHTML=`<div class="ef" style="gap:${u*0.05}px"><b style="font-size:${Math.round(u*0.24)}px">＋</b><span style="font-size:${Math.round(u*0.085)}px">クリックして写真を選ぶ</span></div>`;
+  }else if(it.type==="photo"){
+    const s=srcs.get(it.src);
+    el.style.cssText=`width:${it.w}px;height:${it.h}px;transform:translate(${it.x}px,${it.y}px) rotate(${it.rot||0}deg);opacity:${it.opacity??1}`;
+    const sh=[]; const pd=it.pad||0;
+    if(pd>0) sh.push(`0 0 0 ${pd}px ${it.padColor||"#fff"}`);
+    if(it.border>0) sh.push(`0 0 0 ${pd+it.border}px ${it.borderColor}`);
+    if(sh.length) el.style.boxShadow=sh.join(",");
+    if(it.shadow) el.style.filter="drop-shadow(0 6px 14px rgba(0,0,0,.45))";
+    const img=document.createElement("img");
+    if(s){
+      const k=it.w/it.crop.sw;
+      img.src=s.src;
+      img.style.cssText=`width:${s.img.naturalWidth*k}px;height:${s.img.naturalHeight*(it.h/it.crop.sh)}px;left:${-it.crop.sx*k}px;top:${-it.crop.sy*(it.h/it.crop.sh)}px`;
+    }
+    el.appendChild(img);
+  }else{
+    const m=layoutText(it); it.w=m.w; it.h=m.h;
+    const cv=document.createElement("canvas");
+    cv.width=Math.ceil(m.w); cv.height=Math.ceil(m.h);
+    cv.style.width=m.w+"px"; cv.style.height=m.h+"px";
+    drawTextInto(cv.getContext("2d"),it,0,0);
+    el.style.cssText=`width:${m.w}px;height:${m.h}px;transform:translate(${it.x}px,${it.y}px) rotate(${it.rot||0}deg)`;
+    el.appendChild(cv);
+  }
+  const hit=document.createElement("div"); hit.className="hit"; el.appendChild(hit);
+  return el;
+}
+function refresh(it){
+  const old=layer.querySelector(`[data-id="${it.id}"]`);
+  if(old) old.replaceWith(node(it)); else layer.appendChild(node(it));
+  drawSel();
+}
+
+/* ---- selection frame ---- */
+let selEl=null;
+function drawSel(){
+  if(selEl){selEl.remove();selEl=null;}
+  const it=sel(); if(!it) return;
+  const s=state.scale;
+  selEl=document.createElement("div");
+  selEl.className="sel"+(state.cropMode?" cropping":"");
+  selEl.style.cssText=`width:${it.w}px;height:${it.h}px;transform:translate(${it.x}px,${it.y}px) rotate(${it.rot||0}deg)`;
+  const badge=document.createElement("div"); badge.className="badge";
+  badge.textContent=state.cropMode?"トリミング編集中（枠内をドラッグ／ホイールで拡大）":
+     (it.type==="photo"?`${Math.round(it.w/11.81)}×${Math.round(it.h/11.81)}mm`:`${FONT_LABEL[it.family]} ${Math.round(it.size)}`);
+  badge.style.transform=`scale(${1/s})`; badge.style.transformOrigin="left bottom";
+  selEl.appendChild(badge);
+  const mk=(cls,x,y,dir)=>{ const h=document.createElement("div"); h.className="h "+cls;
+    h.style.left=x+"px"; h.style.top=y+"px"; h.style.transform=`scale(${1/s})`; h.dataset.dir=dir;
+    h.style.cursor=(dir==="rot")?"grab":(/^(nw|se)$/.test(dir)?"nwse-resize":/^(ne|sw)$/.test(dir)?"nesw-resize":/^(n|s)$/.test(dir)?"ns-resize":"ew-resize");
+    selEl.appendChild(h); };
+  if(it.type==="photo"&&!state.cropMode){
+    mk("",0,0,"nw"); mk("",it.w,0,"ne"); mk("",0,it.h,"sw"); mk("",it.w,it.h,"se");
+    mk("edge",it.w/2,0,"n"); mk("edge",it.w/2,it.h,"s"); mk("edge",0,it.h/2,"w"); mk("edge",it.w,it.h/2,"e");
+    mk("rot",it.w+40/s,-40/s,"rot");
+  }else if(it.type==="text"){
+    mk("",it.w,it.h,"se"); mk("rot",it.w+40/s,-40/s,"rot");
+  }
+  layer.appendChild(selEl);
+}
+
+/* ============ pointer interaction ============ */
+let drag=null;
+function pt(e){ const r=paper.getBoundingClientRect(); return {x:(e.clientX-r.left)/state.scale, y:(e.clientY-r.top)/state.scale}; }
+paper.addEventListener("pointerdown",e=>{
+  const h=e.target.closest(".h");
+  const hitEl=e.target.closest(".item");
+  if(!h && !hitEl){ state.sel=null; state.cropMode=false; drawSel(); inspector(); return; }
+  if(hitEl && !h){
+    const it=items().find(i=>i.id===hitEl.dataset.id);
+    if(state.sel!==it.id){ state.sel=it.id; state.cropMode=false; }
+    drawSel(); inspector();
+    const inCrop = it.type==="photo" && it.src && (state.cropMode || e.altKey);
+    drag={mode:inCrop?"pan":"move",it,start:pt(e),moved:false,o:JSON.parse(JSON.stringify(it))};
+  }else if(h){
+    const it=sel(); if(!it) return;
+    const dd=h.dataset.dir;
+    drag={mode:dd==="rot"?"rot":(/^[nsew]$/.test(dd)&&it.type==="photo"?(it.src?"crop":"edge"):"scale"),
+          dir:h.dataset.dir,it,start:pt(e),o:JSON.parse(JSON.stringify(it))};
+  }
+  paper.setPointerCapture(e.pointerId); e.preventDefault();
+});
+paper.addEventListener("pointermove",e=>{
+  if(!drag) return;
+  const p=pt(e), o=drag.o, it=drag.it;
+  let dx=p.x-drag.start.x, dy=p.y-drag.start.y;
+  if(Math.abs(dx)>4/state.scale||Math.abs(dy)>4/state.scale) drag.moved=true;
+  if(drag.mode==="move"){
+    if(e.shiftKey){ if(Math.abs(dx)>Math.abs(dy)) dy=0; else dx=0; }
+    it.x=Math.round(o.x+dx); it.y=Math.round(o.y+dy);
+  }else if(drag.mode==="pan"){
+    const kx=o.crop.sw/o.w, ky=o.crop.sh/o.h;
+    const s=srcs.get(it.src).img;
+    it.crop.sx=clamp(o.crop.sx-dx*kx,0,s.naturalWidth-o.crop.sw);
+    it.crop.sy=clamp(o.crop.sy-dy*ky,0,s.naturalHeight-o.crop.sh);
+  }else if(drag.mode==="rot"){
+    const c=centerOf(o);
+    let a=Math.atan2(p.y-c.y,p.x-c.x)*180/Math.PI-Math.atan2(drag.start.y-c.y,drag.start.x-c.x)*180/Math.PI;
+    let r=o.rot+a; if(e.shiftKey) r=Math.round(r/15)*15;
+    it.rot=Math.round(r*10)/10;
+  }else if(drag.mode==="scale"){
+    const ang=-(o.rot||0)*Math.PI/180, c=Math.cos(ang), s=Math.sin(ang);
+    const lx=dx*c-dy*s, ly=dx*s+dy*c;                    // delta in item local axes
+    const ax=/w$/.test(drag.dir)?1:0, ay=/^n/.test(drag.dir)?1:0;   // fixed anchor
+    let k;
+    const sx=drag.dir.includes("w")?(o.w-lx)/o.w:(o.w+lx)/o.w;
+    const sy=drag.dir.includes("n")?(o.h-ly)/o.h:(o.h+ly)/o.h;
+    k=Math.max(0.03,(Math.abs(sx-1)>Math.abs(sy-1))?sx:sy);
+    if(it.type==="text"){
+      it.size=Math.max(6,Math.round(o.size*k));
+      const m=layoutText(it); anchored(it,ax,ay,()=>{ it.w=m.w; it.h=m.h; });
+    }else{
+      anchored(it,ax,ay,()=>{ it.w=Math.max(20,Math.round(o.w*k)); it.h=Math.max(20,Math.round(o.h*k)); });
+    }
+  }else if(drag.mode==="edge"){
+    const ang=-(o.rot||0)*Math.PI/180, c=Math.cos(ang), s2=Math.sin(ang);
+    const lx=dx*c-dy*s2, ly=dx*s2+dy*c;
+    if(drag.dir==="w") anchored(it,1,0.5,()=>{ it.w=Math.max(40,Math.round(o.w-lx)); });
+    else if(drag.dir==="e") anchored(it,0,0.5,()=>{ it.w=Math.max(40,Math.round(o.w+lx)); });
+    else if(drag.dir==="n") anchored(it,0.5,1,()=>{ it.h=Math.max(40,Math.round(o.h-ly)); });
+    else anchored(it,0.5,0,()=>{ it.h=Math.max(40,Math.round(o.h+ly)); });
+  }else if(drag.mode==="crop"){
+    const ang=-(o.rot||0)*Math.PI/180, c=Math.cos(ang), s=Math.sin(ang);
+    const lx=dx*c-dy*s, ly=dx*s+dy*c;
+    const kx=o.crop.sw/o.w, ky=o.crop.sh/o.h;             // source px per page px (fixed while cropping)
+    const im=srcs.get(it.src)?.img; if(!im) return;
+    if(drag.dir==="w"){
+      const d=clamp(lx,-o.crop.sx/kx,o.w-40);
+      anchored(it,1,0.5,()=>{ it.w=o.w-d; it.crop.sx=o.crop.sx+d*kx; it.crop.sw=o.crop.sw-d*kx; });
+    }else if(drag.dir==="e"){
+      const d=clamp(lx,-(o.w-40),(im.naturalWidth-(o.crop.sx+o.crop.sw))/kx);
+      anchored(it,0,0.5,()=>{ it.w=o.w+d; it.crop.sw=o.crop.sw+d*kx; });
+    }else if(drag.dir==="n"){
+      const d=clamp(ly,-o.crop.sy/ky,o.h-40);
+      anchored(it,0.5,1,()=>{ it.h=o.h-d; it.crop.sy=o.crop.sy+d*ky; it.crop.sh=o.crop.sh-d*ky; });
+    }else{
+      const d=clamp(ly,-(o.h-40),(im.naturalHeight-(o.crop.sy+o.crop.sh))/ky);
+      anchored(it,0.5,0,()=>{ it.h=o.h+d; it.crop.sh=o.crop.sh+d*ky; });
+    }
+    it.w=Math.round(it.w); it.h=Math.round(it.h);
+  }
+  refresh(it);
+});
+["pointerup","pointercancel"].forEach(ev=>paper.addEventListener(ev,()=>{
+  if(!drag) return;
+  const d=drag; drag=null; snapshot(); inspector();
+  if(d.mode==="move"&&!d.moved&&d.it.type==="photo"&&!d.it.src) pickForFrame(d.it);
+}));
+paper.addEventListener("dblclick",e=>{
+  const n=e.target.closest(".item"); if(!n) return;
+  const it=items().find(i=>i.id===n.dataset.id); if(!it) return;
+  if(it.type==="photo"&&!it.src) return;
+  if(it.type==="photo"){ state.sel=it.id; state.cropMode=!state.cropMode; drawSel(); inspector(); }
+});
+// wheel: zoom photo inside frame while cropping, otherwise zoom view with Ctrl
+wrap.addEventListener("wheel",e=>{
+  const it=sel();
+  if(state.cropMode&&it&&it.type==="photo"){
+    e.preventDefault();
+    const im=srcs.get(it.src).img, f=e.deltaY>0?1.06:1/1.06;
+    const nw=clamp(it.crop.sw*f,60,im.naturalWidth), nh=nw*(it.crop.sh/it.crop.sw);
+    if(nh>im.naturalHeight) return;
+    it.crop.sx=clamp(it.crop.sx+(it.crop.sw-nw)/2,0,im.naturalWidth-nw);
+    it.crop.sy=clamp(it.crop.sy+(it.crop.sh-nh)/2,0,im.naturalHeight-nh);
+    it.crop.sw=nw; it.crop.sh=nh; refresh(it); return;
+  }
+  if(e.ctrlKey||e.metaKey){ e.preventDefault(); setScale(state.scale*(e.deltaY>0?0.9:1.1),true); }
+},{passive:false});
+
+/* ============ inspector ============ */
+function inspector(){
+  const it=sel(), box=$("#insp");
+  let h="";
+  if(!it){
+    h+=`<div class="sec"><h3>紙　面</h3>
+      <div class="empty">写真をドラッグ＆ドロップ、または上の「写真を追加」で置いてください。<br>置いた写真は自由に動かせます。</div>
+      <div class="row" style="margin-top:12px"><label>台紙</label><div class="fill">
+        <label class="chk"><input type="checkbox" id="cShowBase" ${state.showBase?"checked":""}>元の紙面を表示</label></div></div>
+      <div class="row"><label>作り直す</label><div class="fill"><button data-act="reframe">この面を写真枠と日付だけに戻す</button></div></div>
+      <div class="row"><label>台紙の画像</label><div class="fill"><button data-act="rebase">この面の元画像を差し替え</button></div></div>
+      <div class="row"><label>目安の線</label><div class="fill">
+        <label class="chk"><input type="checkbox" id="cGrid" ${state.grid?"checked":""}>100px方眼を表示</label></div></div>
+    </div>`;
+  }else if(it.type==="photo"&&!it.src){
+    h+=`<div class="sec"><h3>写真枠</h3>
+      <button data-act="pick" style="width:100%;margin-bottom:8px">この枠に写真を入れる</button>
+      <div class="hint" style="margin-bottom:12px">枠をクリックしても画像を選ぶ画面が開きます。枠に画像ファイルを直接ドロップしてもOKです。</div>
+      <div class="row"><label>位置 X / Y</label><div class="fill grid2">
+        <input type="number" data-f="x" value="${Math.round(it.x)}"><input type="number" data-f="y" value="${Math.round(it.y)}"></div></div>
+      <div class="row"><label>幅 / 高さ</label><div class="fill grid2">
+        <input type="number" data-f="w" value="${Math.round(it.w)}"><input type="number" data-f="h" value="${Math.round(it.h)}"></div></div>
+      <div class="hint">空のままなら印刷・書き出しには出ません（白いまま）。</div>
+    </div>`;
+  }else if(it.type==="photo"){
+    h+=`<div class="sec"><h3>写　真</h3>
+      <div class="row"><label>位置 X / Y</label><div class="fill grid2">
+        <input type="number" data-f="x" value="${Math.round(it.x)}"><input type="number" data-f="y" value="${Math.round(it.y)}"></div></div>
+      <div class="row"><label>幅 / 高さ</label><div class="fill grid2">
+        <input type="number" data-f="w" value="${Math.round(it.w)}"><input type="number" data-f="h" value="${Math.round(it.h)}"></div></div>
+      <div class="row"><label>回転</label><div class="fill"><input type="range" data-f="rot" min="-45" max="45" step="0.5" value="${it.rot||0}"></div>
+        <span style="width:38px;text-align:right;color:var(--mute)">${(it.rot||0).toFixed(1)}°</span></div>
+      <div class="row"><label>不透明度</label><div class="fill"><input type="range" data-f="opacity" min="0.1" max="1" step="0.05" value="${it.opacity??1}"></div></div>
+    </div>
+    <div class="sec"><h3>トリミング</h3>
+      <div class="row"><div class="fill seg">
+        <button data-crop="on" class="${state.cropMode?"on":""}">枠内で動かす</button>
+        <button data-crop="off" class="${!state.cropMode?"on":""}">枠を動かす</button></div></div>
+      <div class="row"><label>拡大</label><div class="fill"><input type="range" id="cropZoom" min="0" max="100" value="${cropZoomVal(it)}"></div></div>
+      <div class="grid2" style="margin-bottom:8px">
+        <button data-act="fill">枠いっぱいに</button><button data-act="reset">全体を表示</button></div>
+      <div class="hint">辺の赤いハンドルを内側にドラッグしても切り取れます。</div>
+    </div>
+    <div class="sec"><h3>ふち</h3>
+      <div class="row"><label>白フチ</label><div class="fill"><input type="range" data-f="pad" min="0" max="60" value="${it.pad||0}"></div>
+        <input type="color" data-f="padColor" value="${it.padColor||"#ffffff"}"></div>
+      <div class="row"><label>枠線</label><div class="fill"><input type="range" data-f="border" min="0" max="24" value="${it.border||0}"></div>
+        <input type="color" data-f="borderColor" value="${it.borderColor||"#000000"}"></div>
+      <div class="row"><label>影</label><div class="fill"><label class="chk"><input type="checkbox" data-f="shadow" ${it.shadow?"checked":""}>落ち影をつける</label></div></div>
+    </div>`;
+  }else{
+    h+=`<div class="sec"><h3>文　字</h3>
+      <div class="row"><div class="fill"><textarea data-f="text">${it.text.replace(/</g,"&lt;")}</textarea></div></div>
+      <div class="row"><div class="fill seg">
+        <button data-vert="0" class="${!it.vertical?"on":""}">横書き</button>
+        <button data-vert="1" class="${it.vertical?"on":""}">縦書き</button></div></div>
+      <div class="row"><label>書体</label><div class="fill"><select data-f="family">
+        ${Object.keys(FONTS).map(k=>`<option value="${k}" ${it.family===k?"selected":""}>${FONT_LABEL[k]}</option>`).join("")}
+      </select></div></div>
+      <div class="row"><label>太さ</label><div class="fill"><select data-f="weight">
+        ${[400,500,700,900].map(w=>`<option value="${w}" ${+it.weight===w?"selected":""}>${({400:"標準",500:"中太",700:"太字",900:"極太"})[w]}</option>`).join("")}
+      </select></div></div>
+      <div class="row"><label>大きさ</label><div class="fill"><input type="range" data-f="size" min="12" max="400" value="${it.size}"></div>
+        <span style="width:34px;text-align:right;color:var(--mute)">${it.size}</span></div>
+      <div class="row"><label>字間</label><div class="fill"><input type="range" data-f="ls" min="-0.15" max="1.2" step="0.01" value="${it.ls}"></div></div>
+      <div class="row"><label>行間</label><div class="fill"><input type="range" data-f="lh" min="1" max="2.6" step="0.05" value="${it.lh}"></div></div>
+      <div class="row"><label>色</label><input type="color" data-f="color" value="${it.color}">
+        <div class="fill seg">${[["left","始め"],["center","中央"],["right","終わり"]].map(a=>`<button data-align="${a[0]}" class="${it.align===a[0]?"on":""}">${a[1]}</button>`).join("")}</div></div>
+      <div class="row"><label>回転</label><div class="fill"><input type="range" data-f="rot" min="-45" max="45" step="0.5" value="${it.rot||0}"></div></div>
+      <div class="grid2"><button data-act="kansuji">数字を漢数字に</button><button data-act="today">今日の日付に</button></div>
+    </div>`;
+  }
+  if(it) h+=`<div class="sec"><h3>並び・複製</h3>
+      <div class="grid2" style="margin-bottom:6px"><button data-act="front">最前面へ</button><button data-act="back">最背面へ</button></div>
+      <div class="grid2" style="margin-bottom:6px"><button data-act="up">ひとつ前へ</button><button data-act="down">ひとつ後ろへ</button></div>
+      <div class="grid2" style="margin-bottom:6px"><button data-act="dupe">複製</button><button data-act="other">${state.page===0?"裏面":"表面"}へ移す</button></div>
+      <button data-act="del" style="width:100%;border-color:#6b2a2e;color:#ff9b9e">削除</button>
+    </div>`;
+  h+=`<div class="sec"><h3>この面の内容</h3><div class="layers" id="layers"></div></div>`;
+  box.innerHTML=h;
+  const lays=$("#layers");
+  [...items()].reverse().forEach(o=>{
+    const d=document.createElement("div"); d.className="lay"+(o.id===state.sel?" on":"");
+    const s=o.type==="photo"&&o.src?srcs.get(o.src):null;
+    d.innerHTML=`<img class="th" src="${s?s.src:""}" alt=""><span class="nm">${o.type==="photo"?(o.name||"写真"):o.text.split("\n")[0]}</span>`;
+    if(o.type!=="photo"||!o.src) d.querySelector(".th").style.cssText="width:34px;height:26px;background:#2a2f38;border-radius:2px";
+    d.onclick=()=>{state.sel=o.id;state.cropMode=false;drawSel();inspector();};
+    lays.appendChild(d);
+  });
+  bindInspector();
+}
+function cropZoomVal(it){
+  const im=srcs.get(it.src); if(!im) return 0;
+  const max=Math.min(im.img.naturalWidth,im.img.naturalHeight*(it.crop.sw/it.crop.sh));
+  return Math.round(100*(1-it.crop.sw/max));
+}
+function bindInspector(){
+  $("#insp").querySelectorAll("[data-f]").forEach(el=>{
+    const f=el.dataset.f, live=el.type==="range"||el.tagName==="TEXTAREA";
+    const apply=()=>{
+      const it=sel(); if(!it) return;
+      let v=el.type==="checkbox"?el.checked:(el.type==="number"||el.type==="range"?parseFloat(el.value):el.value);
+      if(f==="weight") v=parseInt(v,10);
+      if(f==="w"&&it.type==="photo"&&it.src){ const k=v/it.w; it.w=v; it.h=Math.round(it.h*k); }
+      else if(f==="h"&&it.type==="photo"&&it.src){ const k=v/it.h; it.h=v; it.w=Math.round(it.w*k); }
+      else it[f]=v;
+      refresh(it); if(!live) {snapshot(); inspector();}
+    };
+    el.addEventListener(live?"input":"change",apply);
+    if(live) el.addEventListener("change",()=>{snapshot();inspector();});
+  });
+  $("#insp").querySelectorAll("[data-vert]").forEach(b=>b.onclick=()=>{const it=sel();it.vertical=b.dataset.vert==="1";refresh(it);snapshot();inspector();});
+  $("#insp").querySelectorAll("[data-align]").forEach(b=>b.onclick=()=>{const it=sel();it.align=b.dataset.align;refresh(it);snapshot();inspector();});
+  $("#insp").querySelectorAll("[data-crop]").forEach(b=>b.onclick=()=>{state.cropMode=b.dataset.crop==="on";drawSel();inspector();});
+  const cz=$("#cropZoom");
+  if(cz) cz.addEventListener("input",()=>{
+    const it=sel(), im=srcs.get(it.src).img;
+    const maxW=Math.min(im.naturalWidth,im.naturalHeight*(it.crop.sw/it.crop.sh));
+    const cx=it.crop.sx+it.crop.sw/2, cy=it.crop.sy+it.crop.sh/2;
+    const nw=Math.max(60,maxW*(1-cz.value/100)), nh=nw*(it.crop.sh/it.crop.sw);
+    it.crop.sw=nw; it.crop.sh=nh;
+    it.crop.sx=clamp(cx-nw/2,0,im.naturalWidth-nw); it.crop.sy=clamp(cy-nh/2,0,im.naturalHeight-nh);
+    refresh(it);
+  });
+  $("#insp").querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>act(b.dataset.act));
+  const cb=$("#cShowBase"); if(cb) cb.onchange=()=>{state.showBase=cb.checked; baseImg.style.opacity=state.showBase?1:0.12;};
+  const cg=$("#cGrid"); if(cg) cg.onchange=()=>{state.grid=cg.checked; $("#grid").classList.toggle("on",state.grid);};
+}
+function act(a){
+  const it=sel(), arr=items(), i=arr.indexOf(it);
+  switch(a){
+    case "del": arr.splice(i,1); state.sel=null; break;
+    case "dupe": {const c=JSON.parse(JSON.stringify(it)); c.id=nid("i"); c.x+=60;c.y+=60; arr.push(c); state.sel=c.id; break;}
+    case "front": arr.splice(i,1); arr.push(it); break;
+    case "back": arr.splice(i,1); arr.unshift(it); break;
+    case "up": if(i<arr.length-1){arr.splice(i,1);arr.splice(i+1,0,it);} break;
+    case "down": if(i>0){arr.splice(i,1);arr.splice(i-1,0,it);} break;
+    case "other": arr.splice(i,1); state.pages[1-state.page].items.push(it); state.sel=null; toast("反対の面へ移しました"); break;
+    case "fill": { const im=srcs.get(it.src).img, ar=it.w/it.h;
+        let sw=im.naturalWidth, sh=sw/ar; if(sh>im.naturalHeight){sh=im.naturalHeight;sw=sh*ar;}
+        it.crop={sx:(im.naturalWidth-sw)/2,sy:(im.naturalHeight-sh)/2,sw,sh}; break; }
+    case "reset": { const im=srcs.get(it.src).img;
+        it.crop={sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight};
+        it.h=Math.round(it.w*im.naturalHeight/im.naturalWidth); break; }
+    case "pick": pickForFrame(it); return;
+    case "reframe": if(confirm("この面の配置をすべて消して、写真枠と日付だけの状態に戻します。よろしいですか？")){
+        state.pages[state.page]={items:defaultItems(state.page)}; state.sel=null; } break;
+    case "rebase": rebase(); return;
+    case "kansuji": it.text=toKansuji(it.text); break;
+    case "today": { const d=new Date();
+        const wd2="日月火水木金土"[d.getDay()];
+        it.text=it.vertical?toKansuji(`${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`)
+                           :dateLabel(d.getFullYear(),d.getMonth()+1,d.getDate(),wd2); break; }
+  }
+  renderAll(); snapshot();
+}
+function rebase(){
+  const f=document.createElement("input"); f.type="file"; f.accept="image/*";
+  f.onchange=()=>{ const file=f.files[0]; if(!file) return;
+    const fr=new FileReader();
+    fr.onload=()=>{ BASE_SRC[state.page]=fr.result;
+      const im=new Image(); im.src=fr.result; baseImgs[state.page]=im;
+      renderAll(); toast("台紙を差し替えました"); };
+    fr.readAsDataURL(file); };
+  f.click();
+}
+function toKansuji(s){
+  return s.replace(/\d+/g,n=>{
+    let v=parseInt(n,10);
+    if(n.length===4&&v>=1000) return [...n].map(c=>"〇一二三四五六七八九"[+c]).join(""); // 年は位取りなし
+    if(v===0) return "〇";
+    const d="〇一二三四五六七八九";
+    if(v<10) return d[v];
+    if(v<100){ const t=Math.floor(v/10),o=v%10; return (t>1?d[t]:"")+"十"+(o?d[o]:""); }
+    return [...n].map(c=>d[+c]).join("");
+  });
+}
+
+/* ============ date presets ============ */
+const DATE_PRESETS=[
+  {k:"day",   label:"右上の日付欄に「日」「曜日」を入れる（表面）", page:0},
+  {k:"top",   label:"右上に日付を横書きで入れる", page:null},
+  {k:"vert",  label:"右端に日付を縦書きで入れる", page:null},
+  {k:"free",  label:"好きな位置に日付を置く", page:null}
+];
+function addDateDialog(){
+  const d=new Date(), pad=n=>String(n).padStart(2,"0");
+  const def=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+  const dlg=document.createElement("dialog");
+  dlg.innerHTML=`<h2>日付を入れる</h2>
+    <div class="row"><label style="width:70px;color:var(--mute)">日付</label><div class="fill"><input type="date" id="dv" value="${def}"></div></div>
+    <div style="margin:14px 0 6px;color:var(--mute)">入れる場所</div>
+    <div id="dopts" style="display:flex;flex-direction:column;gap:6px"></div>
+    <div style="text-align:right;margin-top:18px"><button id="dcancel">やめる</button></div>`;
+  document.body.appendChild(dlg);
+  const opts=dlg.querySelector("#dopts");
+  DATE_PRESETS.forEach(p=>{
+    const b=document.createElement("button"); b.textContent=p.label; b.style.textAlign="left";
+    b.onclick=()=>{ placeDate(p.k,new Date(dlg.querySelector("#dv").value+"T00:00:00")); dlg.close(); dlg.remove(); };
+    opts.appendChild(b);
+  });
+  dlg.querySelector("#dcancel").onclick=()=>{dlg.close();dlg.remove();};
+  dlg.showModal();
+}
+function placeDate(kind,d){
+  if(isNaN(d)) d=new Date();
+  const y=d.getFullYear(), mo=d.getMonth()+1, da=d.getDate(), wd="日月火水木金土"[d.getDay()];
+  if(kind==="day"){
+    if(state.page!==0){ state.page=0; }
+    const num=makeText({text:String(da),x:3092,y:1452,size:66,lh:1,family:"hiraStdN",weight:900,align:"right",color:"#111111"});
+    const m1=layoutText(num); num.w=m1.w; num.h=m1.h; num.x=3168-m1.w;
+    const w=makeText({text:wd,x:3210,y:1462,size:56,lh:1,family:"hiraStdN",weight:700,color:"#111111"});
+    const m2=layoutText(w); w.w=m2.w; w.h=m2.h;
+    items().push(num,w); state.sel=num.id;
+    toast("右上の日付欄に入れました（ドラッグで微調整できます）");
+  }else if(kind==="top"){
+    const t=makeText({text:dateLabel(y,mo,da,wd),size:44,lh:1,family:"mincho",weight:500,align:"right"});
+    const m=layoutText(t); t.w=m.w;t.h=m.h;
+    t.x=DATEPOS[state.page].x-m.w; t.y=DATEPOS[state.page].y;
+    items().push(t); state.sel=t.id;
+  }else if(kind==="vert"){
+    const t=makeText({text:toKansuji(`${y}年${mo}月${da}日`),vertical:true,size:52,family:"mincho",weight:700});
+    const m=layoutText(t); t.w=m.w;t.h=m.h; t.x=3330; t.y=state.page===0?2320:180;
+    items().push(t); state.sel=t.id;
+  }else{
+    const t=makeText({text:dateLabel(y,mo,da,wd),size:56,family:"mincho",weight:700});
+    const m=layoutText(t); t.w=m.w;t.h=m.h;
+    items().push(t); state.sel=t.id;
+  }
+  state.cropMode=false; renderAll(); snapshot();
+}
+
+/* ============ export ============ */
+async function renderPage(i){
+  const cv=document.createElement("canvas"); cv.width=DOC.w; cv.height=DOC.h;
+  const ctx=cv.getContext("2d");
+  ctx.fillStyle="#fff"; ctx.fillRect(0,0,DOC.w,DOC.h);
+  await new Promise(r=>{ const im=baseImgs[i]; im.complete?r():im.onload=r; });
+  ctx.drawImage(baseImgs[i],0,0,DOC.w,DOC.h);
+  for(const it of state.pages[i].items){
+    ctx.save();
+    const c=centerOf(it);
+    ctx.translate(c.x,c.y); ctx.rotate((it.rot||0)*Math.PI/180); ctx.translate(-it.w/2,-it.h/2);
+    if(it.type==="photo"){
+      const s=it.src&&srcs.get(it.src); if(!s){ctx.restore();continue;}
+      ctx.globalAlpha=it.opacity??1;
+      if(it.shadow){ ctx.shadowColor="rgba(0,0,0,.45)"; ctx.shadowBlur=26; ctx.shadowOffsetY=10; }
+      const p=it.pad||0;
+      if(p>0){ ctx.fillStyle=it.padColor||"#fff"; ctx.fillRect(-p,-p,it.w+p*2,it.h+p*2); }
+      ctx.drawImage(s.img,it.crop.sx,it.crop.sy,it.crop.sw,it.crop.sh,0,0,it.w,it.h);
+      ctx.shadowColor="transparent";
+      if(it.border>0){ ctx.strokeStyle=it.borderColor; ctx.lineWidth=it.border;
+        ctx.strokeRect(-p-it.border/2,-p-it.border/2,it.w+p*2+it.border,it.h+p*2+it.border); }
+    }else drawTextInto(ctx,it,0,0);
+    ctx.restore();
+  }
+  return cv;
+}
+async function exportPng(){
+  toast("書き出しています…");
+  for(let i=0;i<2;i++){
+    const cv=await renderPage(i);
+    const blob=await new Promise(r=>cv.toBlob(r,"image/png"));
+    const a=document.createElement("a");
+    a.download=`学窓新聞_${i===0?"表面":"裏面"}_A3_300dpi.png`;
+    a.href=URL.createObjectURL(blob); a.click();
+    await new Promise(r=>setTimeout(r,600)); URL.revokeObjectURL(a.href);
+  }
+  toast("PNGを2枚保存しました");
+}
+async function doPrint(){
+  toast("印刷用に組み立てています…");
+  const pa=$("#printarea"); pa.innerHTML="";
+  for(let i=0;i<2;i++){
+    const cv=await renderPage(i);
+    const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.94));
+    const im=document.createElement("img"); im.src=URL.createObjectURL(blob); pa.appendChild(im);
+    await new Promise(r=>im.complete?r():im.onload=r);
+  }
+  setTimeout(()=>window.print(),150);
+}
+
+/* ============ save / load ============ */
+function saveJson(){
+  const used=new Set(); state.pages.forEach(p=>p.items.forEach(i=>{ if(i.type==="photo"&&i.src) used.add(i.src); }));
+  const data={format:"gakuso-news-layout",version:1,pages:state.pages,
+    srcs:[...used].map(id=>({id,name:srcs.get(id).name,src:srcs.get(id).src}))};
+  const b=new Blob([JSON.stringify(data)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(b);
+  a.download="学窓新聞_配置データ.json"; a.click();
+  toast("配置データを保存しました");
+}
+function loadJson(file){
+  const fr=new FileReader();
+  fr.onload=async()=>{
+    try{
+      const d=JSON.parse(fr.result);
+      if(d.format!=="gakuso-news-layout") throw 0;
+      srcs.clear();
+      await Promise.all((d.srcs||[]).map(s=>new Promise(res=>{
+        const im=new Image(); im.onload=im.onerror=()=>{srcs.set(s.id,{id:s.id,src:s.src,img:im,name:s.name});res();}; im.src=s.src;
+      })));
+      state.pages=d.pages; state.sel=null; state.cropMode=false;
+      let mx=0; state.pages.forEach(p=>p.items.forEach(i=>{const n=parseInt(String(i.id).slice(1),10); if(n>mx)mx=n;}));
+      (d.srcs||[]).forEach(s=>{const n=parseInt(String(s.id).slice(1),10); if(n>mx)mx=n;});
+      uid=mx+1;
+      renderAll(); snapshot(); toast("読み込みました");
+    }catch(e){ toast("このファイルは読み込めません。保存した.jsonを選んでください"); }
+  };
+  fr.readAsText(file);
+}
+
+/* ============ files in ============ */
+function readFiles(list,at){
+  [...list].filter(f=>f&&f.type&&f.type.startsWith("image/")).forEach((f,n)=>{
+    const name=f.name.replace(/\.[^.]+$/,""), fr=new FileReader();
+    fr.onload=()=>addPhoto(fr.result,name,at?{x:at.x+n*60,y:at.y+n*60}:null);
+    fr.readAsDataURL(f);
+  });
+}
+$("#fileInput").onchange=e=>{
+  const list=[...e.target.files], t=pickTarget, first=list[0];
+  pickTarget=null; e.target.value="";
+  if(t && first && first.type.startsWith("image/")){
+    const name=first.name.replace(/\.[^.]+$/,"");
+    const fr=new FileReader();
+    fr.onload=()=>fillFrame(t,fr.result,name);
+    fr.readAsDataURL(first);
+    if(list.length>1) readFiles(list.slice(1));
+  }else readFiles(list);
+};
+$("#jsonInput").onchange=e=>{ if(e.target.files[0]) loadJson(e.target.files[0]); e.target.value=""; };
+wrap.addEventListener("dragover",e=>{e.preventDefault();$("#dropzone").classList.add("on");});
+wrap.addEventListener("dragleave",e=>{ if(e.target===wrap) $("#dropzone").classList.remove("on"); });
+wrap.addEventListener("drop",e=>{
+  e.preventDefault(); $("#dropzone").classList.remove("on");
+  const files=[...e.dataTransfer.files].filter(f=>f.type.startsWith("image/"));
+  if(!files.length) return;
+  const el=e.target.closest(".item");
+  const it=el?items().find(i=>i.id===el.dataset.id):null;
+  if(it&&it.type==="photo"&&!it.src){
+    const f0=files[0], nm=f0.name.replace(/\.[^.]+$/,""), fr=new FileReader();
+    fr.onload=()=>fillFrame(it,fr.result,nm);
+    fr.readAsDataURL(f0);
+    if(files.length>1) readFiles(files.slice(1), pt(e));
+    return;
+  }
+  readFiles(files, pt(e));
+});
+window.addEventListener("paste",e=>{
+  const f=[...(e.clipboardData?.files||[])]; if(f.length) readFiles(f);
+});
+
+/* ============ toolbar ============ */
+$("#addImg").onclick=()=>{ const it=sel(); if(it&&it.type==="photo"&&!it.src) pickForFrame(it); else $("#fileInput").click(); };
+$("#addText").onclick=()=>{ const t=makeText(); const m=layoutText(t); t.w=m.w;t.h=m.h; items().push(t); state.sel=t.id; renderAll(); snapshot(); };
+$("#addDate").onclick=addDateDialog;
+$("#zoomIn").onclick=()=>setScale(state.scale*1.2,true);
+$("#zoomOut").onclick=()=>setScale(state.scale/1.2,true);
+$("#zoomFit").onclick=()=>{setScale(fitScale());wrap.scrollTo(0,0);};
+$("#exportPng").onclick=exportPng;
+$("#printBtn").onclick=doPrint;
+$("#saveJson").onclick=saveJson;
+$("#loadJson").onclick=()=>$("#jsonInput").click();
+$("#helpBtn").onclick=()=>$("#help").showModal();
+document.querySelectorAll(".ptab").forEach(b=>b.onclick=()=>{ state.page=+b.dataset.page; state.sel=null; state.cropMode=false; renderAll(); });
+
+/* ============ keyboard ============ */
+window.addEventListener("keydown",e=>{
+  const tag=document.activeElement?.tagName;
+  if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT") return;
+  const it=sel();
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="d"&&it){ e.preventDefault(); act("dupe"); return; }
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="p"){ e.preventDefault(); doPrint(); return; }
+  if(!it) return;
+  const step=e.shiftKey?10:1;
+  if(e.key==="Delete"||e.key==="Backspace"){ e.preventDefault(); act("del"); }
+  else if(e.key==="ArrowLeft"){ e.preventDefault(); it.x-=step; refresh(it); }
+  else if(e.key==="ArrowRight"){ e.preventDefault(); it.x+=step; refresh(it); }
+  else if(e.key==="ArrowUp"){ e.preventDefault(); it.y-=step; refresh(it); }
+  else if(e.key==="ArrowDown"){ e.preventDefault(); it.y+=step; refresh(it); }
+  else if(e.key==="["){ act("down"); } else if(e.key==="]"){ act("up"); }
+  else if(e.key==="Escape"){ state.cropMode=false; drawSel(); inspector(); }
+});
+window.addEventListener("keyup",e=>{ if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) snapshot(); });
+window.addEventListener("resize",()=>applyScale());
+window.addEventListener("beforeunload",e=>{ if(state.pages.some(p=>p.items.length)){ e.preventDefault(); e.returnValue=""; } });
+
+/* ============ go ============ */
+resetFrames();
+state.scale=fitScale();
+renderAll(); snapshot();
+</script>
+</body>
+</html>
