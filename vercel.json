@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/upload.js": {
+      "maxDuration": 60
+    },
+    "api/state.js": {
+      "maxDuration": 30
+    }
+  }
+}

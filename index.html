@@ -130,8 +130,9 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <button id="zoomFit" class="ghost">全体表示</button>
   </div>
   <div class="hgroup">
-    <button id="saveJson" class="ghost">保存</button>
-    <button id="loadJson" class="ghost">読み込み</button>
+    <span id="syncStatus" class="hint" style="margin-right:8px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">同期準備中…</span>
+    <button id="saveJson" class="ghost" title="手元用のバックアップ">ダウンロード</button>
+    <button id="loadJson" class="ghost" title="JSONから復元">読込</button>
     <button id="exportPng">PNG書き出し</button>
     <button id="printBtn" class="primary">A3で印刷</button>
     <button id="helpBtn" class="ghost" title="使い方">？</button>
@@ -176,7 +177,8 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <li><b>日付を足す</b>：「日付を入れる」から、右上の日付欄・右端の縦書きなどを選んで配置。置いたあとは自由に移動できます。</li>
     <li><b>書き出し</b>：「A3で印刷」で表裏2ページを両面印刷（用紙A3・余白なし・原寸100%）。「PNG書き出し」は300dpi（3508×4961px）の画像として保存します。</li>
     <li><b>紙面そのものを更新したとき</b>：何も選んでいない状態の右パネルから「この面の元画像を差し替え」でA3・300dpi（3508×4961px）の新しい画像に入れ替えられます。</li>
-    <li><b>保存</b>：「保存」で配置データを.jsonに書き出し。別のPCでも「読み込み」で続きから作業できます。</li>
+    <li><b>自動共有保存</b>：写真を入れるとクラウドへ自動保存され、URLを知っている人なら誰でも続きから編集できます。数秒ごとに他の人の更新も取り込みます。</li>
+    <li><b>手元バックアップ</b>：「ダウンロード」で.jsonを書き出し。「読込」でそのファイルから復元できます。</li>
   </ul>
   <div style="text-align:right;margin-top:16px"><button onclick="help.close()">閉じる</button></div>
 </dialog>
@@ -255,16 +257,177 @@ function coverCrop(it){
   it.crop={sx:(im.naturalWidth-sw)/2, sy:(im.naturalHeight-sh)/2, sw, sh};
 }
 function fillFrame(it,src,name){
-  const im=new Image();
-  im.onload=()=>{
-    const id=nid("s"); srcs.set(id,{id,src,img:im,name});
-    it.src=id; it.name=name; coverCrop(it);
-    state.sel=it.id; renderAll(); snapshot();
-  };
-  im.src=src;
+  return new Promise((resolve,reject)=>{
+    const im=new Image();
+    im.onload=()=>{
+      const id=nid("s"); srcs.set(id,{id,src,img:im,name});
+      it.src=id; it.name=name; coverCrop(it);
+      state.sel=it.id; renderAll(); snapshot();
+      resolve(it);
+    };
+    im.onerror=()=>reject(new Error("画像を読み込めませんでした"));
+    im.src=src;
+  });
 }
 let pickTarget=null;
 function pickForFrame(it){ pickTarget=it; $("#fileInput").click(); }
+
+/* ============ cloud sync ============ */
+let cloudReady=false, applyingRemote=false, cloudDirty=false, cloudSaving=false;
+let cloudRevision=0, saveTimer=null;
+const syncEl=()=>$("#syncStatus");
+function setSyncStatus(kind,msg){
+  const el=syncEl(); if(!el) return;
+  const map={idle:"共有同期OK", saving:"クラウド保存中…", uploading:"写真を送信中…",
+    pulling:"他の更新を取得中…", error:"同期エラー", booting:"同期準備中…"};
+  el.textContent=msg||map[kind]||kind;
+  el.style.color=kind==="error"?"#ff8a8a":"var(--mute)";
+}
+function buildLayoutPayload(){
+  const used=new Set(); state.pages.forEach(p=>p.items.forEach(i=>{ if(i.type==="photo"&&i.src) used.add(i.src); }));
+  return {format:"gakuso-news-layout",version:1,revision:cloudRevision,pages:state.pages,
+    srcs:[...used].map(id=>{
+      const s=srcs.get(id); return {id,name:s?.name||"",src:s?.src||""};
+    }).filter(s=>s.src && !String(s.src).startsWith("data:"))};
+}
+async function applyLayoutData(d){
+  if(!d||d.format!=="gakuso-news-layout"||!Array.isArray(d.pages)) throw new Error("invalid");
+  applyingRemote=true;
+  try{
+    srcs.clear();
+    await Promise.all((d.srcs||[]).map(s=>new Promise(res=>{
+      if(!s||!s.src){res();return;}
+      const im=new Image();
+      im.onload=im.onerror=()=>{srcs.set(s.id,{id:s.id,src:s.src,img:im,name:s.name||""});res();};
+      im.src=s.src;
+    })));
+    state.pages=d.pages; state.sel=null; state.cropMode=false;
+    let mx=0; state.pages.forEach(p=>p.items.forEach(i=>{const n=parseInt(String(i.id).slice(1),10); if(n>mx)mx=n;}));
+    (d.srcs||[]).forEach(s=>{const n=parseInt(String(s.id).slice(1),10); if(n>mx)mx=n;});
+    uid=mx+1;
+    cloudRevision=Number(d.revision||0);
+    renderAll();
+    const snap=JSON.stringify(state.pages);
+    hist=[snap]; hpos=0;
+  }finally{ applyingRemote=false; }
+}
+async function fileToUploadBlob(file){
+  try{
+    const bitmap=await createImageBitmap(file);
+    const maxEdge=2800;
+    let w=bitmap.width, h=bitmap.height;
+    const scale=Math.min(1, maxEdge/Math.max(w,h));
+    w=Math.round(w*scale); h=Math.round(h*scale);
+    const canvas=document.createElement("canvas");
+    canvas.width=w; canvas.height=h;
+    canvas.getContext("2d").drawImage(bitmap,0,0,w,h);
+    bitmap.close();
+    const blob=await new Promise((resolve,reject)=>{
+      canvas.toBlob(b=>b?resolve(b):reject(new Error("圧縮に失敗しました")),"image/jpeg",0.85);
+    });
+    return blob;
+  }catch(e){
+    if(file.size<=4*1024*1024) return file;
+    throw e;
+  }
+}
+async function uploadImageFile(file){
+  setSyncStatus("uploading");
+  const blob=await fileToUploadBlob(file);
+  const base=(file.name||"photo").replace(/\.[^.]+$/,"")||"photo";
+  const filename=base+".jpg";
+  const res=await fetch("/api/upload",{
+    method:"POST",
+    headers:{
+      "content-type": blob.type||"image/jpeg",
+      "x-filename": encodeURIComponent(filename)
+    },
+    body:blob
+  });
+  const data=await res.json().catch(()=>({}));
+  if(!res.ok) throw new Error(data.error||"upload failed");
+  return {url:data.url, name:base};
+}
+async function ingestImageFile(file, onReady){
+  try{
+    const {url,name}=await uploadImageFile(file);
+    await onReady(url,name);
+    queueCloudSave(true);
+    toast("写真を共有保存しました");
+  }catch(err){
+    console.error(err);
+    setSyncStatus("error","送信失敗");
+    toast("写真のアップロードに失敗しました");
+  }
+}
+function queueCloudSave(immediate){
+  if(!cloudReady||applyingRemote) return;
+  cloudDirty=true;
+  clearTimeout(saveTimer);
+  saveTimer=setTimeout(()=>{ cloudSave(); }, immediate?80:1200);
+}
+async function cloudSave(){
+  if(!cloudReady||cloudSaving||applyingRemote||!cloudDirty) return;
+  cloudSaving=true; cloudDirty=false;
+  setSyncStatus("saving");
+  try{
+    const payload=buildLayoutPayload();
+    const res=await fetch("/api/state",{
+      method:"PUT",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(data.error||"save failed");
+    cloudRevision=Number(data.revision||cloudRevision);
+    setSyncStatus("idle",`共有済 · r${cloudRevision}`);
+  }catch(err){
+    console.error(err);
+    cloudDirty=true;
+    setSyncStatus("error","保存失敗（再試行します）");
+    clearTimeout(saveTimer);
+    saveTimer=setTimeout(()=>cloudSave(), 2500);
+  }finally{ cloudSaving=false; }
+}
+async function fetchCloudState(){
+  const res=await fetch("/api/state",{cache:"no-store"});
+  if(!res.ok) throw new Error("state fetch failed");
+  return await res.json();
+}
+async function pollCloud(){
+  if(!cloudReady||cloudSaving||cloudDirty||applyingRemote) return;
+  try{
+    const data=await fetchCloudState();
+    if(data.empty) return;
+    const rev=Number(data.revision||0);
+    if(rev<=cloudRevision) return;
+    setSyncStatus("pulling");
+    await applyLayoutData(data);
+    setSyncStatus("idle",`他端末の更新を反映 · r${cloudRevision}`);
+    toast("他の人の更新を取り込みました");
+  }catch(err){ /* quiet */ }
+}
+async function bootCloud(){
+  setSyncStatus("booting");
+  try{
+    const data=await fetchCloudState();
+    const hasItems=!data.empty && Array.isArray(data.pages) && data.pages.some(p=>(p.items||[]).length>0);
+    if(hasItems){
+      await applyLayoutData(data);
+      setSyncStatus("idle",`共有データを読込 · r${cloudRevision}`);
+    }else{
+      if(!data.empty) cloudRevision=Number(data.revision||0);
+      setSyncStatus("idle","共有待機中（写真を入れると自動保存）");
+    }
+  }catch(err){
+    console.error(err);
+    setSyncStatus("error","共有に接続できません");
+  }finally{
+    cloudReady=true;
+    setInterval(pollCloud, 8000);
+    document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") pollCloud(); });
+  }
+}
 
 /* ============ history ============ */
 let hist=[], hpos=-1;
@@ -272,6 +435,7 @@ function snapshot(){
   const s = JSON.stringify(state.pages);
   if(hist[hpos]===s) return;
   hist = hist.slice(0,hpos+1); hist.push(s); if(hist.length>60) hist.shift(); hpos=hist.length-1;
+  if(!applyingRemote) queueCloudSave(false);
 }
 function undo(){ if(hpos<=0) return; hpos--; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
 function redo(){ if(hpos>=hist.length-1) return; hpos++; state.pages=JSON.parse(hist[hpos]); state.sel=null; renderAll(); }
@@ -319,18 +483,22 @@ function anchored(it, ax, ay, fn){
 
 /* ============ item creation ============ */
 function addPhoto(src,name,at){
-  const im=new Image();
-  im.onload=()=>{
-    const id=nid("s"); srcs.set(id,{id,src,img:im,name});
-    const maxW=DOC.w*0.34, k=Math.min(maxW/im.naturalWidth, (DOC.h*0.3)/im.naturalHeight,1.2);
-    const w=Math.round(im.naturalWidth*k), h=Math.round(im.naturalHeight*k);
-    const p = at || viewCenter();
-    const it={id:nid("i"),type:"photo",src:id,name,x:Math.round(p.x-w/2),y:Math.round(p.y-h/2),w,h,rot:0,
-      crop:{sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight},
-      border:0,borderColor:"#000000",pad:0,padColor:"#ffffff",opacity:1,shadow:false};
-    items().push(it); state.sel=it.id; renderAll(); snapshot();
-  };
-  im.src=src;
+  return new Promise((resolve,reject)=>{
+    const im=new Image();
+    im.onload=()=>{
+      const id=nid("s"); srcs.set(id,{id,src,img:im,name});
+      const maxW=DOC.w*0.34, k=Math.min(maxW/im.naturalWidth, (DOC.h*0.3)/im.naturalHeight,1.2);
+      const w=Math.round(im.naturalWidth*k), h=Math.round(im.naturalHeight*k);
+      const p = at || viewCenter();
+      const it={id:nid("i"),type:"photo",src:id,name,x:Math.round(p.x-w/2),y:Math.round(p.y-h/2),w,h,rot:0,
+        crop:{sx:0,sy:0,sw:im.naturalWidth,sh:im.naturalHeight},
+        border:0,borderColor:"#000000",pad:0,padColor:"#ffffff",opacity:1,shadow:false};
+      items().push(it); state.sel=it.id; renderAll(); snapshot();
+      resolve(it);
+    };
+    im.onerror=()=>reject(new Error("画像を読み込めませんでした"));
+    im.src=src;
+  });
 }
 function viewCenter(){
   return {x:clamp((wrap.scrollLeft+wrap.clientWidth/2)/state.scale,0,DOC.w),
@@ -853,29 +1021,23 @@ async function doPrint(){
 
 /* ============ save / load ============ */
 function saveJson(){
+  const data=buildLayoutPayload();
+  // 手元バックアップ用に data: 画像も含める
   const used=new Set(); state.pages.forEach(p=>p.items.forEach(i=>{ if(i.type==="photo"&&i.src) used.add(i.src); }));
-  const data={format:"gakuso-news-layout",version:1,pages:state.pages,
-    srcs:[...used].map(id=>({id,name:srcs.get(id).name,src:srcs.get(id).src}))};
+  data.srcs=[...used].map(id=>{ const s=srcs.get(id); return {id,name:s?.name||"",src:s?.src||""}; });
   const b=new Blob([JSON.stringify(data)],{type:"application/json"});
   const a=document.createElement("a"); a.href=URL.createObjectURL(b);
   a.download="学窓新聞_配置データ.json"; a.click();
-  toast("配置データを保存しました");
+  toast("配置データをダウンロードしました");
 }
 function loadJson(file){
   const fr=new FileReader();
   fr.onload=async()=>{
     try{
       const d=JSON.parse(fr.result);
-      if(d.format!=="gakuso-news-layout") throw 0;
-      srcs.clear();
-      await Promise.all((d.srcs||[]).map(s=>new Promise(res=>{
-        const im=new Image(); im.onload=im.onerror=()=>{srcs.set(s.id,{id:s.id,src:s.src,img:im,name:s.name});res();}; im.src=s.src;
-      })));
-      state.pages=d.pages; state.sel=null; state.cropMode=false;
-      let mx=0; state.pages.forEach(p=>p.items.forEach(i=>{const n=parseInt(String(i.id).slice(1),10); if(n>mx)mx=n;}));
-      (d.srcs||[]).forEach(s=>{const n=parseInt(String(s.id).slice(1),10); if(n>mx)mx=n;});
-      uid=mx+1;
-      renderAll(); snapshot(); toast("読み込みました");
+      await applyLayoutData(d);
+      queueCloudSave(true);
+      toast("読み込みました（共有へ同期します）");
     }catch(e){ toast("このファイルは読み込めません。保存した.jsonを選んでください"); }
   };
   fr.readAsText(file);
@@ -884,19 +1046,14 @@ function loadJson(file){
 /* ============ files in ============ */
 function readFiles(list,at){
   [...list].filter(f=>f&&f.type&&f.type.startsWith("image/")).forEach((f,n)=>{
-    const name=f.name.replace(/\.[^.]+$/,""), fr=new FileReader();
-    fr.onload=()=>addPhoto(fr.result,name,at?{x:at.x+n*60,y:at.y+n*60}:null);
-    fr.readAsDataURL(f);
+    ingestImageFile(f,(url,name)=>addPhoto(url,name,at?{x:at.x+n*60,y:at.y+n*60}:null));
   });
 }
 $("#fileInput").onchange=e=>{
   const list=[...e.target.files], t=pickTarget, first=list[0];
   pickTarget=null; e.target.value="";
   if(t && first && first.type.startsWith("image/")){
-    const name=first.name.replace(/\.[^.]+$/,"");
-    const fr=new FileReader();
-    fr.onload=()=>fillFrame(t,fr.result,name);
-    fr.readAsDataURL(first);
+    ingestImageFile(first,(url,name)=>fillFrame(t,url,name));
     if(list.length>1) readFiles(list.slice(1));
   }else readFiles(list);
 };
@@ -910,9 +1067,7 @@ wrap.addEventListener("drop",e=>{
   const el=e.target.closest(".item");
   const it=el?items().find(i=>i.id===el.dataset.id):null;
   if(it&&it.type==="photo"&&!it.src){
-    const f0=files[0], nm=f0.name.replace(/\.[^.]+$/,""), fr=new FileReader();
-    fr.onload=()=>fillFrame(it,fr.result,nm);
-    fr.readAsDataURL(f0);
+    ingestImageFile(files[0],(url,name)=>fillFrame(it,url,name));
     if(files.length>1) readFiles(files.slice(1), pt(e));
     return;
   }
@@ -956,12 +1111,17 @@ window.addEventListener("keydown",e=>{
 });
 window.addEventListener("keyup",e=>{ if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.key)) snapshot(); });
 window.addEventListener("resize",()=>applyScale());
-window.addEventListener("beforeunload",e=>{ if(state.pages.some(p=>p.items.length)){ e.preventDefault(); e.returnValue=""; } });
+window.addEventListener("beforeunload",e=>{
+  if(cloudDirty){ e.preventDefault(); e.returnValue=""; cloudSave(); }
+});
 
 /* ============ go ============ */
 resetFrames();
 state.scale=fitScale();
-renderAll(); snapshot();
+renderAll();
+const bootSnap=JSON.stringify(state.pages);
+hist=[bootSnap]; hpos=0;
+bootCloud();
 </script>
 </body>
 </html>

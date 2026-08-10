@@ -1,0 +1,9 @@
+{
+  "name": "school-newspaper",
+  "private": true,
+  "version": "1.0.0",
+  "description": "学窓新聞 写真差し込みツール",
+  "dependencies": {
+    "@vercel/blob": "^2.7.0"
+  }
+}
