@@ -240,14 +240,41 @@ function defaultItems(pi){
   const list=FRAMES[pi].map(newFrame), p=todayParts(), c=DATEPOS[pi];
   const head=fitText(makeText({text:dateLabel(p.y,p.mo,p.da,p.wd),size:c.size,lh:1,
     family:"mincho",weight:500,color:"#111111"}));
-  head.x=c.x-head.w; head.y=c.y; list.push(head);
+  head.x=c.x-head.w; head.y=c.y; head.dateRole="top"; list.push(head);
   if(pi===0){
     const num=fitText(makeText({text:String(p.da),y:1452,size:66,lh:1,family:"hiraStdN",weight:900,color:"#111111"}));
-    num.x=3168-num.w;
+    num.x=3168-num.w; num.dateRole="num";
     const wd=fitText(makeText({text:p.wd,x:3210,y:1462,size:56,lh:1,family:"hiraStdN",weight:700,color:"#111111"}));
-    list.push(num,wd);
+    wd.dateRole="wd"; list.push(num,wd);
   }
   return list;
+}
+const RE_DATE_TOP=/^\d{4}年\(令和\d+年\)\d+月\d+日\([日月火水木金土]\)$/;
+const RE_DATE_WD=/^[日月火水木金土]$/;
+function refreshDateItems(){
+  const p=todayParts();
+  state.pages.forEach((pg,pi)=>{
+    pg.items.forEach(it=>{
+      if(it.type!=="text") return;
+      // フラグがなければテキストパターンで判定（既存保存データ対応）
+      if(!it.dateRole){
+        if(RE_DATE_TOP.test(it.text)) it.dateRole="top";
+        else if(pi===0 && RE_DATE_WD.test(it.text) && it.size===56) it.dateRole="wd";
+        else if(pi===0 && /^\d{1,2}$/.test(it.text) && it.size===66) it.dateRole="num";
+      }
+      if(it.dateRole==="top"){
+        it.text=dateLabel(p.y,p.mo,p.da,p.wd);
+        const m=layoutText(it); it.w=m.w; it.h=m.h;
+      } else if(it.dateRole==="num"){
+        it.text=String(p.da);
+        const m=layoutText(it); it.w=m.w; it.h=m.h;
+        it.x=3168-it.w;
+      } else if(it.dateRole==="wd"){
+        it.text=p.wd;
+        const m=layoutText(it); it.w=m.w; it.h=m.h;
+      }
+    });
+  });
 }
 function resetFrames(){
   state.pages=FRAMES.map((l,i)=>({items:defaultItems(i)}));
@@ -309,6 +336,7 @@ async function applyLayoutData(d){
     (d.srcs||[]).forEach(s=>{const n=parseInt(String(s.id).slice(1),10); if(n>mx)mx=n;});
     uid=mx+1;
     cloudRevision=Number(d.revision||0);
+    refreshDateItems();
     renderAll();
     const snap=JSON.stringify(state.pages);
     hist=[snap]; hpos=0;
