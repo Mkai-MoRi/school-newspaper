@@ -1045,8 +1045,9 @@ async function renderPage(i){
   const cv=document.createElement("canvas"); cv.width=DOC.w; cv.height=DOC.h;
   const ctx=cv.getContext("2d");
   ctx.fillStyle="#fff"; ctx.fillRect(0,0,DOC.w,DOC.h);
-  await new Promise(r=>{ const im=baseImgs[i]; im.complete?r():im.onload=r; });
-  ctx.drawImage(baseImgs[i],0,0,DOC.w,DOC.h);
+  const im=baseImgs[i];
+  if(!im.complete) await new Promise(r=>{im.onload=im.onerror=r;});
+  if(im.naturalHeight>0) ctx.drawImage(im,0,0,DOC.w,DOC.h);
   for(const it of state.pages[i].items){
     ctx.save();
     const c=centerOf(it);
@@ -1092,24 +1093,66 @@ async function doPrint(){
 }
 async function exportPdf(){
   toast("PDF生成中…");
-  if(!window.jspdf){
-    await new Promise((res,rej)=>{
-      const s=document.createElement("script");
-      s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
-      s.onload=res; s.onerror=()=>rej(new Error("jsPDFの読み込みに失敗しました"));
-      document.head.appendChild(s);
-    });
-  }
-  const {jsPDF}=window.jspdf;
-  const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a3"});
+  const jpegs=[];
   for(let i=0;i<2;i++){
-    if(i>0) pdf.addPage("a3","portrait");
     const cv=await renderPage(i);
-    const imgData=cv.toDataURL("image/jpeg",0.92);
-    pdf.addImage(imgData,"JPEG",0,0,297,420);
+    const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.92));
+    jpegs.push(new Uint8Array(await blob.arrayBuffer()));
   }
-  pdf.save("学窓新聞_A3.pdf");
+  const pdfBytes=buildA3Pdf(jpegs);
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([pdfBytes],{type:"application/pdf"}));
+  a.download="学窓新聞_A3.pdf"; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),10000);
   toast("PDFを保存しました");
+}
+function buildA3Pdf(jpegs){
+  // A3: 297mm×420mm = 841.89pt×1190.55pt (72pt/inch)
+  const PW=841.89, PH=1190.55, IW=DOC.w, IH=DOC.h;
+  const enc=new TextEncoder();
+  const chunks=[], xref=[];
+  let pos=0, objN=0;
+  const push=b=>{chunks.push(b);pos+=b.length;};
+  const s=t=>{const b=enc.encode(t);push(b);};
+  const ln=t=>s((t??"")+"\n");
+  const startObj=()=>{xref.push(pos);ln(`${++objN} 0 obj`);};
+  const endObj=()=>ln("endobj");
+
+  ln("%PDF-1.4");
+  push(new Uint8Array([0x25,0xE2,0xE3,0xCF,0xD3,0x0A]));
+
+  startObj(); ln("<< /Type /Catalog /Pages 2 0 R >>"); endObj(); // 1
+  const pageRefs=jpegs.map((_,i)=>`${4+i*3} 0 R`).join(" ");
+  startObj(); ln(`<< /Type /Pages /Kids [${pageRefs}] /Count ${jpegs.length} >>`); endObj(); // 2
+
+  jpegs.forEach((jpeg,i)=>{
+    const imgObj=3+i*3, contObj=5+i*3;
+    startObj(); // imgObj
+    ln(`<< /Type /XObject /Subtype /Image /Width ${IW} /Height ${IH}`);
+    ln(`   /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>`);
+    ln("stream"); push(jpeg); s("\n"); ln("endstream"); endObj();
+
+    startObj(); // pageObj
+    ln(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}]`);
+    ln(`   /Resources << /XObject << /Im0 ${imgObj} 0 R >> >>`);
+    ln(`   /Contents ${contObj} 0 R >>`); endObj();
+
+    const cs=`q ${PW} 0 0 ${PH} 0 0 cm /Im0 Do Q`;
+    startObj(); // contObj
+    ln(`<< /Length ${cs.length} >>`); ln("stream"); ln(cs); ln("endstream"); endObj();
+  });
+
+  const xrefPos=pos;
+  ln(`xref\n0 ${objN+1}`);
+  ln("0000000000 65535 f ");
+  xref.forEach(o=>ln(String(o).padStart(10,"0")+" 00000 n "));
+  ln(`trailer\n<< /Size ${objN+1} /Root 1 0 R >>`);
+  ln(`startxref\n${xrefPos}`); s("%%EOF");
+
+  const total=chunks.reduce((a,c)=>a+c.length,0);
+  const out=new Uint8Array(total); let off=0;
+  chunks.forEach(c=>{out.set(c,off);off+=c.length;});
+  return out;
 }
 
 /* ============ save / load ============ */
