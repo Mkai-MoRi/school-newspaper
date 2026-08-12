@@ -289,7 +289,7 @@ function coverCrop(it){
 }
 function fillFrame(it,src,name){
   return new Promise((resolve,reject)=>{
-    const im=new Image();
+    const im=new Image(); im.crossOrigin="anonymous";
     im.onload=()=>{
       const id=nid("s"); srcs.set(id,{id,src,img:im,name});
       it.src=id; it.name=name; coverCrop(it);
@@ -328,7 +328,7 @@ async function applyLayoutData(d){
     srcs.clear();
     await Promise.all((d.srcs||[]).map(s=>new Promise(res=>{
       if(!s||!s.src){res();return;}
-      const im=new Image();
+      const im=new Image(); im.crossOrigin="anonymous";
       im.onload=im.onerror=()=>{srcs.set(s.id,{id:s.id,src:s.src,img:im,name:s.name||""});res();};
       im.src=s.src;
     })));
@@ -538,7 +538,7 @@ function anchored(it, ax, ay, fn){
 /* ============ item creation ============ */
 function addPhoto(src,name,at){
   return new Promise((resolve,reject)=>{
-    const im=new Image();
+    const im=new Image(); im.crossOrigin="anonymous";
     im.onload=()=>{
       const id=nid("s"); srcs.set(id,{id,src,img:im,name});
       const maxW=DOC.w*0.34, k=Math.min(maxW/im.naturalWidth, (DOC.h*0.3)/im.naturalHeight,1.2);
@@ -1069,27 +1069,33 @@ async function renderPage(i){
 }
 async function exportPng(){
   toast("書き出しています…");
-  for(let i=0;i<2;i++){
-    const cv=await renderPage(i);
-    const blob=await new Promise(r=>cv.toBlob(r,"image/png"));
-    const a=document.createElement("a");
-    a.download=`学窓新聞_${i===0?"表面":"裏面"}_A3_300dpi.png`;
-    a.href=URL.createObjectURL(blob); a.click();
-    await new Promise(r=>setTimeout(r,600)); URL.revokeObjectURL(a.href);
-  }
-  toast("PNGを2枚保存しました");
+  try{
+    for(let i=0;i<2;i++){
+      const cv=await renderPage(i);
+      const blob=await new Promise(r=>cv.toBlob(r,"image/png"));
+      if(!blob) throw new Error("canvas書き出し失敗（写真のCORS制限）");
+      const a=document.createElement("a");
+      a.download=`学窓新聞_${i===0?"表面":"裏面"}_A3_300dpi.png`;
+      a.href=URL.createObjectURL(blob); a.click();
+      await new Promise(r=>setTimeout(r,600)); URL.revokeObjectURL(a.href);
+    }
+    toast("PNGを2枚保存しました");
+  }catch(e){ console.error(e); toast("PNG書き出し失敗: "+e.message); }
 }
 async function doPrint(){
   toast("印刷用に組み立てています…");
-  const pa=$("#printarea"); pa.innerHTML="";
-  for(let i=0;i<2;i++){
-    const cv=await renderPage(i);
-    const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.94));
-    const im=document.createElement("img"); im.src=URL.createObjectURL(blob); pa.appendChild(im);
-    await new Promise(r=>{ if(im.complete&&im.naturalHeight>0) r(); else im.onload=r; });
-  }
-  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
-  window.print();
+  try{
+    const pa=$("#printarea"); pa.innerHTML="";
+    for(let i=0;i<2;i++){
+      const cv=await renderPage(i);
+      const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.94));
+      if(!blob) throw new Error("canvas書き出し失敗（写真のCORS制限）");
+      const im=document.createElement("img"); im.src=URL.createObjectURL(blob); pa.appendChild(im);
+      await new Promise(r=>{ if(im.complete&&im.naturalHeight>0) r(); else im.onload=r; });
+    }
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    window.print();
+  }catch(e){ console.error(e); toast("印刷失敗: "+e.message); }
 }
 async function exportPdf(){
   toast("PDF生成中…");
