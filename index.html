@@ -136,6 +136,7 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <button id="saveJson" class="ghost" title="手元用のバックアップ">ダウンロード</button>
     <button id="loadJson" class="ghost" title="JSONから復元">読込</button>
     <button id="exportPng">PNG書き出し</button>
+    <button id="exportPdf">PDF書き出し</button>
     <button id="printBtn" class="primary">A3で印刷</button>
     <button id="helpBtn" class="ghost" title="使い方">？</button>
   </div>
@@ -1084,9 +1085,31 @@ async function doPrint(){
     const cv=await renderPage(i);
     const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.94));
     const im=document.createElement("img"); im.src=URL.createObjectURL(blob); pa.appendChild(im);
-    await new Promise(r=>im.complete?r():im.onload=r);
+    await new Promise(r=>{ if(im.complete&&im.naturalHeight>0) r(); else im.onload=r; });
   }
-  setTimeout(()=>window.print(),150);
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  window.print();
+}
+async function exportPdf(){
+  toast("PDF生成中…");
+  if(!window.jspdf){
+    await new Promise((res,rej)=>{
+      const s=document.createElement("script");
+      s.src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+      s.onload=res; s.onerror=()=>rej(new Error("jsPDFの読み込みに失敗しました"));
+      document.head.appendChild(s);
+    });
+  }
+  const {jsPDF}=window.jspdf;
+  const pdf=new jsPDF({orientation:"portrait",unit:"mm",format:"a3"});
+  for(let i=0;i<2;i++){
+    if(i>0) pdf.addPage("a3","portrait");
+    const cv=await renderPage(i);
+    const imgData=cv.toDataURL("image/jpeg",0.92);
+    pdf.addImage(imgData,"JPEG",0,0,297,420);
+  }
+  pdf.save("学窓新聞_A3.pdf");
+  toast("PDFを保存しました");
 }
 
 /* ============ save / load ============ */
@@ -1155,6 +1178,7 @@ $("#zoomIn").onclick=()=>setScale(state.scale*1.2,true);
 $("#zoomOut").onclick=()=>setScale(state.scale/1.2,true);
 $("#zoomFit").onclick=()=>{setScale(fitScale());wrap.scrollTo(0,0);};
 $("#exportPng").onclick=exportPng;
+$("#exportPdf").onclick=()=>exportPdf().catch(e=>{console.error(e);toast("PDF生成に失敗しました");});
 $("#printBtn").onclick=doPrint;
 $("#pullCloud").onclick=()=>pullCloud();
 $("#pushCloud").onclick=()=>pushCloud();
