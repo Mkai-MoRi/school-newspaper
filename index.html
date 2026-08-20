@@ -135,6 +135,7 @@ kbd{background:#14171b;border:1px solid var(--line);border-bottom-width:2px;bord
     <button id="pushCloud" class="ghost" title="今の紙面を共有に保存">共有に保存</button>
     <button id="saveJson" class="ghost" title="手元用のバックアップ">ダウンロード</button>
     <button id="loadJson" class="ghost" title="JSONから復元">読込</button>
+    <label id="grayWrap" title="白黒（モノクロ）で書き出し・印刷" style="display:inline-flex;align-items:center;gap:4px;padding:0 6px;cursor:pointer"><input type="checkbox" id="grayToggle" checked style="cursor:pointer">グレー</label>
     <button id="exportPng">PNG書き出し</button>
     <button id="exportPdf">PDF書き出し</button>
     <button id="printBtn" class="primary">A3で印刷</button>
@@ -1041,7 +1042,7 @@ function placeDate(kind,d){
 }
 
 /* ============ export ============ */
-async function renderPage(i){
+async function renderPage(i,gray){
   const cv=document.createElement("canvas"); cv.width=DOC.w; cv.height=DOC.h;
   const ctx=cv.getContext("2d");
   ctx.fillStyle="#fff"; ctx.fillRect(0,0,DOC.w,DOC.h);
@@ -1065,29 +1066,34 @@ async function renderPage(i){
     }else drawTextInto(ctx,it,0,0);
     ctx.restore();
   }
+  if(gray){
+    const d=ctx.getImageData(0,0,DOC.w,DOC.h), a=d.data;
+    for(let p=0;p<a.length;p+=4){ const y=(a[p]*0.299+a[p+1]*0.587+a[p+2]*0.114+0.5)|0; a[p]=a[p+1]=a[p+2]=y; }
+    ctx.putImageData(d,0,0);
+  }
   return cv;
 }
-async function exportPng(){
-  toast("書き出しています…");
+async function exportPng(gray){
+  toast(gray?"グレースケールで書き出しています…":"書き出しています…");
   try{
     for(let i=0;i<2;i++){
-      const cv=await renderPage(i);
+      const cv=await renderPage(i,gray);
       const blob=await new Promise(r=>cv.toBlob(r,"image/png"));
       if(!blob) throw new Error("canvas書き出し失敗（写真のCORS制限）");
       const a=document.createElement("a");
-      a.download=`学窓新聞_${i===0?"表面":"裏面"}_A3_300dpi.png`;
+      a.download=`学窓新聞_${i===0?"表面":"裏面"}${gray?"_グレースケール":""}_A3_300dpi.png`;
       a.href=URL.createObjectURL(blob); a.click();
       await new Promise(r=>setTimeout(r,600)); URL.revokeObjectURL(a.href);
     }
     toast("PNGを2枚保存しました");
   }catch(e){ console.error(e); toast("PNG書き出し失敗: "+e.message); }
 }
-async function doPrint(){
+async function doPrint(gray){
   toast("印刷用に組み立てています…");
   try{
     const pa=$("#printarea"); pa.innerHTML="";
     for(let i=0;i<2;i++){
-      const cv=await renderPage(i);
+      const cv=await renderPage(i,gray);
       const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.94));
       if(!blob) throw new Error("canvas書き出し失敗（写真のCORS制限）");
       const im=document.createElement("img"); im.src=URL.createObjectURL(blob); pa.appendChild(im);
@@ -1097,11 +1103,11 @@ async function doPrint(){
     window.print();
   }catch(e){ console.error(e); toast("印刷失敗: "+e.message); }
 }
-async function exportPdf(){
+async function exportPdf(gray){
   toast("PDF生成中…");
   const jpegs=[];
   for(let i=0;i<2;i++){
-    const cv=await renderPage(i);
+    const cv=await renderPage(i,gray);
     const blob=await new Promise(r=>cv.toBlob(r,"image/jpeg",0.92));
     jpegs.push(new Uint8Array(await blob.arrayBuffer()));
   }
@@ -1226,9 +1232,10 @@ $("#addDate").onclick=addDateDialog;
 $("#zoomIn").onclick=()=>setScale(state.scale*1.2,true);
 $("#zoomOut").onclick=()=>setScale(state.scale/1.2,true);
 $("#zoomFit").onclick=()=>{setScale(fitScale());wrap.scrollTo(0,0);};
-$("#exportPng").onclick=exportPng;
-$("#exportPdf").onclick=()=>exportPdf().catch(e=>{console.error(e);toast("PDF生成に失敗しました");});
-$("#printBtn").onclick=doPrint;
+const isGray=()=>$("#grayToggle")?.checked;
+$("#exportPng").onclick=()=>exportPng(isGray());
+$("#exportPdf").onclick=()=>exportPdf(isGray()).catch(e=>{console.error(e);toast("PDF生成に失敗しました");});
+$("#printBtn").onclick=()=>doPrint(isGray());
 $("#pullCloud").onclick=()=>pullCloud();
 $("#pushCloud").onclick=()=>pushCloud();
 $("#saveJson").onclick=saveJson;
